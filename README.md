@@ -1,97 +1,97 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+cat << 'EOF' > README.md
+# 🎙️ On-Device AI Meeting Assistant
 
-# Getting Started
+A 100% offline, privacy-first meeting assistant built for high-end mobile devices. This application listens to meetings, transcribes audio in real-time, and generates smart summaries every 5 minutes using on-device Large Language Models (LLMs). Zero cloud dependencies, zero API costs, full data privacy.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## 🚀 Vision & Value Proposition
 
-## Step 1: Start Metro
+* **Core Function:** Real-time speech-to-text (STT) and periodic summarization completely offline.
+* **Target Devices:** High-end devices due to RAM constraints. Minimum 8GB RAM for Android (Snapdragon 8 Gen 2+) and iPhone 14 Pro / 15 series+ for iOS.
+* **Languages:** Fully supports bilingual interactions (Turkish & English).
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## 🧠 Technical Architecture: Asynchronous Audio Buffer
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+Running two heavy AI models (`whisper` and `llama`) simultaneously on a mobile device will cause Thermal Throttling and Out-Of-Memory (OOM) crashes. We solved this using a **TypeScript-driven Asynchronous Audio Buffer Strategy**:
 
-```sh
-# Using npm
-npm start
+1. `whisper.rn` runs continuously, transcribing audio.
+2. At the 5-minute mark, the transcribed text is routed to the `react-native-llama` (Qwen) engine.
+3. To allocate GPU/CPU resources to the LLM, the STT engine (`whisper.rn`) is temporarily **paused**.
+4. The microphone remains active. Incoming raw PCM audio is saved to a temporary RAM buffer.
+5. Once Qwen finishes the summary (approx. 2-4 seconds), the buffered audio is rapidly fed into `whisper.rn` to catch up to real-time execution. Zero data loss.
 
-# OR using Yarn
-yarn start
-```
+## 🛠 Tech Stack
 
-## Step 2: Build and run your app
+* **Framework:** React Native (TypeScript) - *Pragmatic Architecture, no custom C++ bridges*
+* **STT Engine:** `whisper.rn` (Model: `ggml-small`)
+* **LLM Engine:** `llama.rn` (Model: Qwen-1.5-1.5B 4-bit Quantized)
+* **Local Database:** `@nozbe/watermelondb` (SQLite)
+* **Audio Capture:** `react-native-audio-record`
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## ⚙️ Getting Started (Local Development)
 
-### Android
+### Prerequisites
+* **Node.js:** v22.x LTS (Strictly required. Do not use v25+ or v18-)
+* **Package Manager:** `npm`
+* **Android Development:** Android Studio, Android SDK 34, NDK installed.
+* **iOS Development:** Xcode, CocoaPods (Mac only).
 
-```sh
-# Using npm
-npm run android
+### Installation
 
-# OR using Yarn
-yarn android
-```
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/kadiryildiz283/on-device-meeting-assistant.git](https://github.com/kadiryildiz283/on-device-meeting-assistant.git)
+   cd on-device-meeting-assistant
 
-### iOS
+    Install dependencies:
+    Bash
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+    npm install --legacy-peer-deps
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+    Model Setup (Crucial):
+    Since AI models are too large for Git, you must download them manually for development.
 
-```sh
-bundle install
-```
+        Download ggml-small.bin for Whisper and place it in src/assets/models/.
 
-Then, and every time you update your native dependencies, run:
+        Download the quantized qwen-1.5b-4bit.gguf for Llama and place it in src/assets/models/.
 
-```sh
-bundle exec pod install
-```
+Running the App
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+For Android:
+Bash
 
-```sh
-# Using npm
-npm run ios
+npx react-native run-android
 
-# OR using Yarn
-yarn ios
-```
+(Ensure you have an emulator running or a physical high-end Android device connected via USB debugging).
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+For iOS:
+Bash
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+cd ios && pod install && cd ..
+npx react-native run-ios
 
-## Step 3: Modify your app
+🗺️ Roadmap (12 Phases)
 
-Now that you have successfully run the app, let's make changes!
+    Phase 1: NPM Packages & Environment Setup (Completed)
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+    Phase 2: Local Persistence Layer (SQLite/WatermelonDB)
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+    Phase 3: Minimalist UI & Dark Mode
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+    Phase 4: Audio Capture & TS Buffer Module
 
-## Congratulations! :tada:
+    Phase 5: STT Engine (whisper.rn) Integration
 
-You've successfully run and modified your React Native App. :partying_face:
+    Phase 6: Real-time Transcription Stream UI
 
-### Now what?
+    Phase 7: LLM Engine (llama.rn) Integration
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+    Phase 8: TS Async Buffer Orchestration
 
-# Troubleshooting
+    Phase 9: Periodic Summarization & Auto-Naming
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+    Phase 10: Smart VAD (Voice Activity Detection)
 
-# Learn More
+    Phase 11: On-Device Vector Search (TS)
 
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+    Phase 12: RAM Management & OOM Prevention
+    EOF
