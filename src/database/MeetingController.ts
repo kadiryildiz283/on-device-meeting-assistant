@@ -17,7 +17,20 @@ export class MeetingController {
         console.log(`[DB] Created new meeting: ${meeting!.id}`);
         return meeting!;
     }
-
+    /**
+     * Updates the summary of an existing meeting.
+     * Appends the new summary block if a summary already exists.
+     */
+    static async updateSummary(meeting: MeetingModel, newSummary: string): Promise<void> {
+        await database.write(async () => {
+            await meeting.update(record => {
+                // If there's an existing summary, append with a line break
+                const current = record.summary || "";
+                record.summary = current ? `${current}\n• ${newSummary}` : `• ${newSummary}`;
+            });
+        });
+        console.log(`[DB] Updated summary for meeting: ${meeting.id}`);
+    }
     /**
      * Saves a new transcript chunk attached to a specific meeting.
      */

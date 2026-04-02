@@ -1,18 +1,13 @@
 const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
 
-/**
- * Metro configuration
- * https://reactnative.dev/docs/metro
- *
- * @type {import('metro-config').MetroConfig}
- */
 const defaultConfig = getDefaultConfig(__dirname);
+const { assetExts } = defaultConfig.resolver;
 
-const customConfig = {
+const config = {
   resolver: {
-    // Add .bin extension so Metro bundler recognizes Whisper and Llama models
-    assetExts: [...defaultConfig.resolver.assetExts, 'bin', 'gguf'],
+    // Hem Whisper (.bin) hem de Llama (.gguf) uzantılarına açıkça izin veriyoruz
+    assetExts: [...assetExts, 'bin', 'gguf'],
   },
 };
 
-module.exports = mergeConfig(defaultConfig, customConfig);
+module.exports = mergeConfig(defaultConfig, config);
