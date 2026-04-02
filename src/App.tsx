@@ -23,6 +23,17 @@ const App = () => {
   const [selectedMeeting, setSelectedMeeting] = useState<MeetingModel | null>(null);
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
 
+  const requestAllFilesAccess = () => {
+    Alert.alert(
+      "Kritik İzin Gerekli",
+      "7B Modelinin yüklenebilmesi için 'Tüm dosyalara erişim' izni vermeniz gerekmektedir. Ayarlara giderek bu izni aktif edin.",
+      [
+        { text: "Daha Sonra", style: "cancel" },
+        { text: "Ayarlara Git", onPress: () => Linking.openSettings() }
+      ]
+    );
+  };
+
   /**
    * Stratejik Karar: Android 11+ (API 30+) cihazlarda 7B modeline 
    * erişim sağlamak için özel 'MANAGE_EXTERNAL_STORAGE' izni tetiklenmelidir.
@@ -33,6 +44,7 @@ const App = () => {
         // Bu izin 'Special App Access' olduğu için kullanıcıyı manuel yönlendirmek rasyoneldir.
         // LLM 'Failed to load model' hatası veriyorsa burası hayatidir.
         console.log("[App] Android 11+ detected. Ensure 'All Files Access' is granted in settings.");
+        requestAllFilesAccess();
       }
     };
     handleSpecialPermissions();
@@ -52,17 +64,6 @@ const App = () => {
     setSelectedMeeting(meeting);
     // Seçim sonrası drawer'ı otomatik kapat
     toggleDrawer();
-  };
-
-  const requestAllFilesAccess = () => {
-    Alert.alert(
-      "Kritik İzin Gerekli",
-      "7B Modelinin yüklenebilmesi için 'Tüm dosyalara erişim' izni vermeniz gerekmektedir. Ayarlara giderek bu izni aktif edin.",
-      [
-        { text: "Daha Sonra", style: "cancel" },
-        { text: "Ayarlara Git", onPress: () => Linking.openSettings() }
-      ]
-    );
   };
 
   return (
