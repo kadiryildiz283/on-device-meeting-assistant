@@ -1,25 +1,38 @@
-# AI Models
+# --- AI MODELS & LARGE BINARIES ---
+# Tüm GGUF ve BIN dosyalarını her yerden engelle
 *.gguf
 *.bin
-/assets/models/
-/android/app/src/main/assets/*.gguf
-/android/app/src/main/assets/*.bin
-
-# Large Binary Files
 *.weights
 *.onnx
+# Model klasörlerini ve asset dökümlerini engelle
+/src/assets/models/
+/android/app/src/main/assets/*.gguf
+/android/app/src/main/assets/*.bin
+/android/app/src/main/assets/ggml-hexagon/
 
-# OS generated files
-.DS_Store
-Thumbs.db
+# --- NODE.JS ---
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log*
+.eslintcache
 
-# OSX
-#
-.DS_Store
-
-# Xcode
-#
+# --- ANDROID ---
+.gradle
 build/
+local.properties
+*.iml
+*.hprof
+.cxx/
+*.keystore
+!debug.keystore
+.kotlin/
+.idea/
+
+# --- IOS ---
+ios/build/
+ios/Pods/
+ios/DerivedData/
 *.pbxuser
 !default.pbxuser
 *.mode1v3
@@ -28,60 +41,19 @@ build/
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
-xcuserdata
+xcuserdata/
 *.xccheckout
 *.moved-aside
-DerivedData
 *.hmap
 *.ipa
 *.xcuserstate
 **/.xcode.env.local
-
-# Android/IntelliJ
-#
-build/
-.idea
-.gradle
-local.properties
-*.iml
-*.hprof
-.cxx/
-*.keystore
-!debug.keystore
-.kotlin/
-
-# node.js
-#
-node_modules/
-npm-debug.log
-yarn-error.log
-
-# fastlane
-#
-# It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate the
-# screenshots whenever they are needed.
-# For more information about the recommended setup visit:
-# https://docs.fastlane.tools/best-practices/source-control/
-
-**/fastlane/report.xml
-**/fastlane/Preview.html
-**/fastlane/screenshots
-**/fastlane/test_output
-
-# Bundle artifact
-*.jsbundle
-
-# Ruby / CocoaPods
-**/Pods/
 /vendor/bundle/
 
-# Temporary files created by Metro to check the health of the file watcher
+# --- REACT native & METRO ---
+*.jsbundle
 .metro-health-check*
-
-# testing
 /coverage
-
-# Yarn
 .yarn/*
 !.yarn/patches
 !.yarn/plugins
@@ -89,7 +61,17 @@ yarn-error.log
 !.yarn/sdks
 !.yarn/versions
 
-# AI Models & Native Libraries
-src/assets/models/*.bin
-src/assets/models/*.gguf
-android/app/src/main/assets/ggml-hexagon/
+# --- SYSTEM FILES ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- FASTLANE ---
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots
+**/fastlane/test_output
