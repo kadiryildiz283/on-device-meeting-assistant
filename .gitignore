@@ -73,3 +73,8 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# AI Models & Native Libraries
+src/assets/models/*.bin
+src/assets/models/*.gguf
+android/app/src/main/assets/ggml-hexagon/

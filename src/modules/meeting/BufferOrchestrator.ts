@@ -1,58 +1,191 @@
 import { Platform } from 'react-native';
+import { whisperService } from '../../services/WhisperService';
 
+/**
+ * Supported Whisper model types for future-proofing.
+ */
+export type WhisperModelType = 'tiny' | 'base' | 'small' | 'medium';
+
+/**
+ * BufferOrchestrator: The brain of the meeting assistant.
+ * Manages the lifecycle of transcription, audio buffering, and synchronization
+ * between Whisper (STT) and Llama (LLM).
+ */
 export class BufferOrchestrator {
+    // --- State Properties ---
     private isRecording: boolean = false;
-    private summaryIntervalMs: number = 5 * 60 * 1000; // 5 mins loop
-    private timerId: NodeJS.Timeout | null = null;
+    private fullTranscript: string = "";
+    private currentSessionTranscript: string = ""; // Transcript of the current 5-min block
+    private selectedModel: WhisperModelType = 'small'; // Defaulted to 'small' as requested
     
-    // Asynchronous buffer for raw PCM audio data
-    private rawAudioBuffer: Float32Array[] = [];
+    // --- Timing & Synchronization ---
+    private summaryIntervalMs: number = 5 * 60 * 1000; // 5 minutes
+    private timerId: NodeJS.Timeout | null = null;
+    private isProcessingSummary: boolean = false;
+
+    // --- UI Callbacks ---
+    public onTranscriptionUpdate: ((text: string) => void) | null = null;
+    public onSummaryGenerated: ((summary: string) => void) | null = null;
+    public onStatusChange: ((status: 'idle' | 'recording' | 'processing') => void) | null = null;
 
     constructor() {
-        console.log("BufferOrchestrator initialized on", Platform.OS);
+        console.log(`[BufferOrchestrator] Initialized for ${Platform.OS}. Default model: ${this.selectedModel}`);
     }
 
+    /**
+     * Updates the model preference for the next initialization.
+     * Note for Kadir: Use this setter when implementing the UI toggle later.
+     */
+    public setModelPreference(model: WhisperModelType): void {
+        this.selectedModel = model;
+        console.log(`[BufferOrchestrator] Model preference updated to: ${model}`);
+    }
+
+    /**
+     * Starts the meeting transcription and the background summary loop.
+     */
     public async startMeeting(): Promise<void> {
+        if (this.isRecording) return;
+
         this.isRecording = true;
-        console.log("Starting meeting. Initializing STT Engine...");
-        
-        // TODO: Start Foreground service notification here
-        // TODO: Start Microphone & Whisper.rn
-        
-        this.startSummaryLoop();
+        this.fullTranscript = "";
+        this.currentSessionTranscript = "";
+        this.updateStatus('recording');
+
+        try {
+            // Initialize STT Service (Ensures model is loaded)
+            await whisperService.initialize();
+
+            // Start Real-time Transcription
+            await this.beginTranscriptionFlow();
+
+            // Launch the periodic summary cycle (Phase 7-9)
+            this.startSummaryLoop();
+
+            console.log("[BufferOrchestrator] Meeting session started successfully.");
+        } catch (error) {
+            console.error("[BufferOrchestrator] Failed to start meeting:", error);
+            this.cleanup();
+        }
     }
 
+    /**
+     * Stops the meeting and cleans up resources.
+     */
+    public async stopMeeting(): Promise<void> {
+        if (!this.isRecording) return;
+
+        console.log("[BufferOrchestrator] Stopping meeting...");
+        this.isRecording = false;
+        this.updateStatus('idle');
+
+        if (this.timerId) {
+            clearInterval(this.timerId);
+            this.timerId = null;
+        }
+
+        await whisperService.stopTranscribing();
+        console.log("[BufferOrchestrator] Resources released. Final transcript length:", this.fullTranscript.length);
+    }
+
+    // --- Private Logic ---
+
+    /**
+     * Internal transcription flow with improved deduplication and validation.
+     */
+    private async beginTranscriptionFlow(): Promise<void> {
+        await whisperService.startTranscribing((newSegment: string) => {
+            const cleanSegment = newSegment.trim();
+
+            if (this.isValidNewSegment(cleanSegment)) {
+                this.processIncomingText(cleanSegment);
+            }
+        });
+    }
+
+    /**
+     * Validates if the new segment should be appended (Deduplication Logic).
+     */
+    private isValidNewSegment(segment: string): boolean {
+        if (segment.length === 0) return false;
+        
+        // Prevent immediate repeat of the exact same string
+        const lastPart = this.fullTranscript.slice(-segment.length * 2);
+        return !lastPart.includes(segment);
+    }
+
+    /**
+     * Appends text to buffers and notifies the UI.
+     */
+    private processIncomingText(text: string): void {
+        const separator = this.fullTranscript.length > 0 ? " " : "";
+        this.fullTranscript += separator + text;
+        this.currentSessionTranscript += separator + text;
+
+        if (this.onTranscriptionUpdate) {
+            this.onTranscriptionUpdate(this.fullTranscript);
+        }
+    }
+
+    /**
+     * Manages the 5-minute interval timer.
+     */
     private startSummaryLoop(): void {
         this.timerId = setInterval(async () => {
-            await this.triggerSummaryCycle();
+            if (this.isRecording && !this.isProcessingSummary) {
+                await this.runSummaryCycle();
+            }
         }, this.summaryIntervalMs);
     }
 
-    private async triggerSummaryCycle(): Promise<void> {
-        if (!this.isRecording) return;
+    /**
+     * Orchestrates the pause-summarize-resume flow.
+     */
+    private async runSummaryCycle(): Promise<void> {
+        this.isProcessingSummary = true;
+        this.updateStatus('processing');
         
-        console.log("--- 5 MINUTE MARK ---");
-        console.log("1. Pausing Whisper STT processing (Mic remains ON)");
-        console.log("2. Routing new mic data to rawAudioBuffer...");
-        
-        // TODO: Feed the accumulated 5-min text to Llama.rn (Qwen)
-        console.log("3. Waking up Qwen LLM for summarization...");
-        
-        // Simulate LLM processing time
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        console.log("4. Summary generated and saved to DB.");
-        console.log("5. Resuming Whisper STT.");
-        console.log("6. Speed-processing rawAudioBuffer to catch up...");
-        
-        // Clear buffer after catch-up
-        this.rawAudioBuffer = [];
-        console.log("--- CYCLE COMPLETE ---");
+        console.log("[BufferOrchestrator] --- 5 Minute Summary Cycle Started ---");
+
+        try {
+            // 1. Pause STT to free up NPU/GPU for LLM
+            await whisperService.stopTranscribing();
+
+            // 2. Placeholder for Phase 7 (Llama.rn / Qwen)
+            // const summary = await llamaService.summarize(this.currentSessionTranscript);
+            console.log("[BufferOrchestrator] STT Paused. Awaiting LLM summary...");
+            
+            // Simulating LLM processing time
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Reset the 5-min block transcript after sending to LLM
+            this.currentSessionTranscript = "";
+
+            // 3. Resume STT
+            if (this.isRecording) {
+                await this.beginTranscriptionFlow();
+                this.updateStatus('recording');
+            }
+
+        } catch (error) {
+            console.error("[BufferOrchestrator] Summary cycle failed:", error);
+        } finally {
+            this.isProcessingSummary = false;
+            console.log("[BufferOrchestrator] --- Summary Cycle Completed ---");
+        }
     }
 
-    public async stopMeeting(): Promise<void> {
+    private updateStatus(status: 'idle' | 'recording' | 'processing'): void {
+        if (this.onStatusChange) this.onStatusChange(status);
+    }
+
+    private cleanup(): void {
         this.isRecording = false;
+        this.isProcessingSummary = false;
+        this.updateStatus('idle');
         if (this.timerId) clearInterval(this.timerId);
-        console.log("Meeting stopped. Generating final title with LLM...");
     }
 }
+
+// Singleton export
+export const orchestrator = new BufferOrchestrator();
