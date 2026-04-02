@@ -1,97 +1,33 @@
 cat << 'EOF' > README.md
-# 🎙️ On-Device AI Meeting Assistant
+# 🎙️ ConferenceAi: On-Device AI Meeting Assistant
 
-A 100% offline, privacy-first meeting assistant built for high-end mobile devices. This application listens to meetings, transcribes audio in real-time, and generates smart summaries every 5 minutes using on-device Large Language Models (LLMs). Zero cloud dependencies, zero API costs, full data privacy.
+Gizlilik odaklı, %100 çevrimdışı çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
 
-## 🚀 Vision & Value Proposition
+## 🌟 Temel Özellikler
+- **Real-time STT:** `whisper.rn` (ggml-small) kullanarak anlık konuşma dökümü sağlar.
+- **On-Device LLM:** `llama.rn` (Qwen 2.5 7B) ile toplantı sonunda otomatik akıllı özetleme yapar.
+- **Yerel Veri Saklama:** `@nozbe/watermelondb` (SQLite) ile tüm veriler cihazda kalır, buluta çıkmaz.
+- **Dinamik Kaynak Yönetimi:** RAM darboğazını önlemek için Whisper ve Llama motorları sıralı (sequential) çalıştırılır.
 
-* **Core Function:** Real-time speech-to-text (STT) and periodic summarization completely offline.
-* **Target Devices:** High-end devices due to RAM constraints. Minimum 8GB RAM for Android (Snapdragon 8 Gen 2+) and iPhone 14 Pro / 15 series+ for iOS.
-* **Languages:** Fully supports bilingual interactions (Turkish & English).
+## 🛠 Teknik Mimari (Sequential Processing)
+Uygulama, mobil cihazlardaki RAM limitlerini aşmamak için **"Continuous Recording + Final Summary"** stratejisini kullanır:
+1. **Kayıt Aşaması:** Whisper motoru gerçek zamanlı transkripsiyon yapar. Llama motoru bu sırada kapalıdır.
+2. **Özetleme Aşaması:** Toplantı durdurulduğunda Whisper durdurulur, kaynaklar serbest bırakılır ve Llama 7B motoru başlatılarak tüm döküm özetlenir.
+3. **Kalıcılık:** Her transkripsiyon parçası ve final özeti anlık olarak WatermelonDB'ye kaydedilir.
 
-## 🧠 Technical Architecture: Asynchronous Audio Buffer
+## 🚀 Kurulum ve Çalıştırma
 
-Running two heavy AI models (`whisper` and `llama`) simultaneously on a mobile device will cause Thermal Throttling and Out-Of-Memory (OOM) crashes. We solved this using a **TypeScript-driven Asynchronous Audio Buffer Strategy**:
+### Gereksinimler
+- **Node.js:** v22.x
+- **Android:** SDK 34+ / **iOS:** Xcode 15+
+- **Donanım:** En az 8GB RAM'li fiziksel cihaz (Yüksek GPU gücü önerilir).
 
-1. `whisper.rn` runs continuously, transcribing audio.
-2. At the 5-minute mark, the transcribed text is routed to the `react-native-llama` (Qwen) engine.
-3. To allocate GPU/CPU resources to the LLM, the STT engine (`whisper.rn`) is temporarily **paused**.
-4. The microphone remains active. Incoming raw PCM audio is saved to a temporary RAM buffer.
-5. Once Qwen finishes the summary (approx. 2-4 seconds), the buffered audio is rapidly fed into `whisper.rn` to catch up to real-time execution. Zero data loss.
+### Adımlar
+1. `npm install --legacy-peer-deps`
+2. **Model Kurulumu:** 
+   - `ModelDownloader.ts` aracılığıyla `qwen2.5-7b-instruct-q4_k_m.gguf` dosyasını indirin.
+   - Whisper modeli için `src/assets/models/ggml-small.bin` yolunu kontrol edin.
+3. `npx react-native run-android` veya `npx react-native run-ios`
 
-## 🛠 Tech Stack
-
-* **Framework:** React Native (TypeScript) - *Pragmatic Architecture, no custom C++ bridges*
-* **STT Engine:** `whisper.rn` (Model: `ggml-small`)
-* **LLM Engine:** `llama.rn` (Model: Qwen-1.5-1.5B 4-bit Quantized)
-* **Local Database:** `@nozbe/watermelondb` (SQLite)
-* **Audio Capture:** `react-native-audio-record`
-
-## ⚙️ Getting Started (Local Development)
-
-### Prerequisites
-* **Node.js:** v22.x LTS (Strictly required. Do not use v25+ or v18-)
-* **Package Manager:** `npm`
-* **Android Development:** Android Studio, Android SDK 34, NDK installed.
-* **iOS Development:** Xcode, CocoaPods (Mac only).
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/kadiryildiz283/on-device-meeting-assistant.git](https://github.com/kadiryildiz283/on-device-meeting-assistant.git)
-   cd on-device-meeting-assistant
-
-    Install dependencies:
-    Bash
-
-    npm install --legacy-peer-deps
-
-    Model Setup (Crucial):
-    Since AI models are too large for Git, you must download them manually for development.
-
-        Download ggml-small.bin for Whisper and place it in src/assets/models/.
-
-        Download the quantized qwen-1.5b-4bit.gguf for Llama and place it in src/assets/models/.
-
-Running the App
-
-For Android:
-Bash
-
-npx react-native run-android
-
-(Ensure you have an emulator running or a physical high-end Android device connected via USB debugging).
-
-For iOS:
-Bash
-
-cd ios && pod install && cd ..
-npx react-native run-ios
-
-🗺️ Roadmap (12 Phases)
-
-    Phase 1: NPM Packages & Environment Setup (Completed)
-
-    Phase 2: Local Persistence Layer (SQLite/WatermelonDB)
-
-    Phase 3: Minimalist UI & Dark Mode
-
-    Phase 4: Audio Capture & TS Buffer Module
-
-    Phase 5: STT Engine (whisper.rn) Integration
-
-    Phase 6: Real-time Transcription Stream UI
-
-    Phase 7: LLM Engine (llama.rn) Integration
-
-    Phase 8: TS Async Buffer Orchestration
-
-    Phase 9: Periodic Summarization & Auto-Naming
-
-    Phase 10: Smart VAD (Voice Activity Detection)
-
-    Phase 11: On-Device Vector Search (TS)
-
-    Phase 12: RAM Management & OOM Prevention
-    EOF
+## 📊 Mevcut Durum
+Proje şu anda; ses kaydı, anlık döküm, veritabanı senkronizasyonu ve toplantı sonu özetleme döngüsünü stabil şekilde tamamlamaktadır.
