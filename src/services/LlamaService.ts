@@ -22,9 +22,9 @@ export class LlamaService {
             // 2. RAM & Motor Başlatma
             this.llamaContext = await initLlama({
                 model: modelPath,
-                use_mlock: true,   // 8GB RAM için hayati
+                use_mlock: false,   // 8GB RAM için hayati
                 n_ctx: 2048,
-                n_threads: 8,      // S25 için optimal çekirdek sayısı
+                n_threads: 4,      // S25 için optimal çekirdek sayısı
             });
             
             this.isInitialized = true;
