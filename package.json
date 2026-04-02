@@ -19,11 +19,12 @@
     "react-native-audio-record": "^0.2.2",
     "react-native-fs": "^2.20.0",
     "react-native-permissions": "^5.5.1",
-    "react-native-safe-area-context": "^5.5.2",
+    "react-native-safe-area-context": "^5.7.0",
     "whisper.rn": "^0.5.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@babel/plugin-proposal-decorators": "^7.29.0",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
     "@react-native-community/cli": "20.1.0",

@@ -1,3 +1,5 @@
+import { MeetingController } from '../../database/MeetingController';
+import { MeetingModel } from '../../database/MeetingModel';
 import { Platform } from 'react-native';
 import { whisperService } from '../../services/WhisperService';
 
@@ -13,6 +15,7 @@ export type WhisperModelType = 'tiny' | 'base' | 'small' | 'medium';
  */
 export class BufferOrchestrator {
     // --- State Properties ---
+    private currentMeeting: MeetingModel | null = null;
     private isRecording: boolean = false;
     private fullTranscript: string = "";
     private currentSessionTranscript: string = ""; // Transcript of the current 5-min block
@@ -53,6 +56,9 @@ export class BufferOrchestrator {
         this.updateStatus('recording');
 
         try {
+          // Create a new meeting in DB before starting audio
+            const timeString = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+            this.currentMeeting = await MeetingController.createMeeting(`Toplantı ${timeString}`);
             // Initialize STT Service (Ensures model is loaded)
             await whisperService.initialize();
 
@@ -121,6 +127,13 @@ export class BufferOrchestrator {
         const separator = this.fullTranscript.length > 0 ? " " : "";
         this.fullTranscript += separator + text;
         this.currentSessionTranscript += separator + text;
+
+        // Persist to SQLite Database
+        if (this.currentMeeting) {
+            MeetingController.addTranscript(this.currentMeeting, text).catch(e => 
+                console.error("[BufferOrchestrator] Failed to save transcript to DB:", e)
+            );
+        }
 
         if (this.onTranscriptionUpdate) {
             this.onTranscriptionUpdate(this.fullTranscript);
