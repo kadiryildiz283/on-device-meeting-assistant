@@ -1,95 +1,68 @@
 import { initLlama, LlamaContext } from 'llama.rn';
 import RNFS from 'react-native-fs';
 
-/**
- * Handles Local LLM operations. Optimized for Qwen 0.5B model.
- */
 export class LlamaService {
     private llamaContext: LlamaContext | null = null;
     private isInitialized: boolean = false;
 
-    /**
-     * Prepares the model file and initializes the engine.
-     */
     public async initialize(): Promise<void> {
         if (this.isInitialized) return;
 
-        console.log("[LlamaService] Preparing Qwen 0.5B model...");
+        const modelPath = `${RNFS.ExternalStorageDirectoryPath}/Download/qwen2.5-7b-instruct-q4_k_m.gguf`;
+
         try {
-            const modelFileName = ' qwen2.5-7b-instruct-q4_k_m.gguf';
-            const destPath = `${RNFS.DocumentDirectoryPath}/${modelFileName}`;
+            // 1. Dosya Kontrolü
+            const exists = await RNFS.exists(modelPath);
+            if (!exists) throw new Error(`Model dosyası bulunamadı: ${modelPath}`);
 
-            const exists = await RNFS.exists(destPath);
-            if (!exists) {
-                console.log("[LlamaService] Extracting model to device storage...");
-                await RNFS.copyFileAssets(modelFileName, destPath);
-                console.log("[LlamaService] Extraction complete.");
-            }
+            const stats = await RNFS.stat(modelPath);
+            console.log(`[LlamaService] Model bulundu: ${(stats.size / 1e9).toFixed(2)} GB`);
 
-            console.log("[LlamaService] Loading model into RAM...");
+            // 2. RAM & Motor Başlatma
             this.llamaContext = await initLlama({
-                model: destPath,
-                use_mlock: true, // Prevents OS from swapping memory
-                n_ctx: 2048,     // Context window limit
-                n_gpu_layers: 0  // Mobile CPU execution
+                model: modelPath,
+                use_mlock: true,   // 8GB RAM için hayati
+                n_ctx: 2048,
+                n_threads: 8,      // S25 için optimal çekirdek sayısı
             });
             
             this.isInitialized = true;
-            console.log("[LlamaService] Llama Engine ready.");
-        } catch (error) {
-            console.error("[LlamaService] Initialization failed:", error);
+            console.log("[LlamaService] 7B Engine initialized.");
+        } catch (error: any) {
+            console.error("[LlamaService] Load error:", error.message);
             throw error;
         }
     }
 
-    /**
-     * Summarizes the transcript using ChatML formatting to ensure the model 
-     * understands the boundary between instruction and data.
-     */
     public async summarize(text: string): Promise<string> {
-        if (!this.llamaContext) throw new Error("Llama not initialized");
+        if (!this.llamaContext) return "Llama not ready.";
 
-        console.log("[LlamaService] Generating final summary...");
-
-        // Safety: Qwen 0.5B handles ~1.5k tokens comfortably. 
-        // We truncate the input to the last 4000 characters to prevent context overflow.
-        const safeText = text.length > 4000 ? text.slice(-4000) : text;
-
-        // Optimized ChatML prompt for Qwen
-        const prompt = `<|im_start|>system\nYou are a professional meeting assistant. Provide a concise bullet-point summary in Turkish. Focus on key decisions and outcomes. Do not repeat the transcript.<|im_end|>\n<|im_start|>user\nToplantı dökümünü özetle:\n\n${safeText}<|im_end|>\n<|im_start|>assistant\n`;
+        const prompt = `<|im_start|>system
+Sen profesyonel bir toplantı asistanısın. Aşağıdaki konuşma dökümünü Türkçe olarak, ana kararlar ve aksiyonlar bazında çok kısa özetle.<|im_end|>
+<|im_start|>user
+${text.slice(-5000)}<|im_end|>
+<|im_start|>assistant\n`;
 
         try {
-            let summaryResult = "";
-            
+            let res = "";
             await this.llamaContext.completion({
                 prompt,
-                n_predict: 400, // Longer limit for a comprehensive final summary
-                temperature: 0.2, // Lower temperature for more factual summaries
-                stop: ["<|im_end|>", "<|im_start|>", "user:", "assistant:"],
-            }, (response) => {
-                summaryResult += response.token;
-            });
+                n_predict: 400,
+                temperature: 0.2,
+                stop: ["<|im_end|>", "<|im_start|>"],
+            }, (tokenRes) => { res += tokenRes.token; });
 
-            // Post-processing: Remove potential prompt leakage
-            const cleanedResult = summaryResult.replace(prompt, "").trim();
-
-            console.log("[LlamaService] Summary generation complete.");
-            return cleanedResult || "Özet oluşturulamadı.";
-        } catch (error) {
-            console.error("[LlamaService] Summarization failed:", error);
-            return "Özetleme işlemi başarısız oldu.";
+            return res.trim();
+        } catch (e) {
+            return "Özetleme başarısız.";
         }
     }
 
-    /**
-     * Releases native memory. Critical for preventing OOM crashes on Android.
-     */
     public async release(): Promise<void> {
         if (this.llamaContext) {
             await this.llamaContext.release();
             this.llamaContext = null;
             this.isInitialized = false;
-            console.log("[LlamaService] Llama resources released.");
         }
     }
 }

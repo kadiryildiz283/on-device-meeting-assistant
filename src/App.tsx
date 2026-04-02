@@ -23,17 +23,34 @@ const App = () => {
   const [selectedMeeting, setSelectedMeeting] = useState<MeetingModel | null>(null);
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
 
-  const requestAllFilesAccess = () => {
+// App.tsx içindeki requestAllFilesAccess fonksiyonunu şu şekilde revize et:
+
+const requestAllFilesAccess = async () => {
+  if (Platform.OS === 'android') {
+    const packageName = 'com.conferenceai'; // AndroidManifest içindeki package adınla aynı olmalı
+    
     Alert.alert(
-      "Kritik İzin Gerekli",
-      "7B Modelinin yüklenebilmesi için 'Tüm dosyalara erişim' izni vermeniz gerekmektedir. Ayarlara giderek bu izni aktif edin.",
+      "Özel Dosya Erişimi Gerekli",
+      "7B model dosyasını okuyabilmemiz için 'Tüm dosyalara erişim' iznini manuel olarak açmanız gerekmektedir.",
       [
-        { text: "Daha Sonra", style: "cancel" },
-        { text: "Ayarlara Git", onPress: () => Linking.openSettings() }
+        { text: "İptal", style: "cancel" },
+        { 
+          text: "İzni Aç", 
+          onPress: () => {
+            // Android 11+ için spesifik 'Manage All Files' sayfasını açar
+            Linking.openURL(`package:${packageName}`).catch(() => {
+                // Eğer paket yolu hata verirse genel ayarları aç
+                Linking.openSettings();
+            });
+            
+            // Alternatif: Bazı cihazlarda bu intent daha iyi çalışır
+            // Linking.sendIntent('android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION', [{ key: 'package', value: packageName }]);
+          } 
+        }
       ]
     );
-  };
-
+  }
+};
   /**
    * Stratejik Karar: Android 11+ (API 30+) cihazlarda 7B modeline 
    * erişim sağlamak için özel 'MANAGE_EXTERNAL_STORAGE' izni tetiklenmelidir.
