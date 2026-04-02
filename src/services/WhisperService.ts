@@ -1,94 +1,86 @@
 import { initWhisper, WhisperContext } from 'whisper.rn';
+import { PermissionsAndroid, Platform } from 'react-native';
+
+export type WhisperModelType = 'tiny' | 'small' | 'base';
 
 export class WhisperService {
     private whisperContext: WhisperContext | null = null;
     private isInitialized: boolean = false;
-    private isCapturing: boolean = false; // Prevents "already capturing" error
+    private isCapturing: boolean = false;
     private stopTranscriptionCb: (() => void) | null = null;
 
-    /**
-     * Initializes the Whisper engine.
-     */
-    public async initialize(): Promise<void> {
+    public async initialize(modelType: WhisperModelType): Promise<void> {
+        // Zaten yüklüyse tekrar yükleme (Ama artık her seferinde sıfırdan yüklenecek)
         if (this.isInitialized) return;
-
-        console.log("[WhisperService] Loading model into memory...");
+        
         try {
-            // Using require to ensure the asset is bundled
-            const modelAsset = require('../assets/models/ggml-small.bin');
-            
-            this.whisperContext = await initWhisper({
-                filePath: modelAsset,
-            });
-            
+            const modelAsset = modelType === 'tiny' ? require('../assets/models/ggml-tiny.bin') : require('../assets/models/ggml-small.bin');
+            this.whisperContext = await initWhisper({ filePath: modelAsset });
             this.isInitialized = true;
-            console.log("[WhisperService] Engine initialized successfully.");
         } catch (error) {
-            console.error("[WhisperService] Initialization failed:", error);
             throw error;
         }
     }
 
-    /**
-     * Starts transcription with safety locks.
-     */
-    public async startTranscribing(onNewSegment: (text: string) => void): Promise<void> {
-        if (!this.whisperContext) {
-            throw new Error("WhisperService: Context not initialized. Call initialize() first.");
-        }
+    private async requestMicPermission(): Promise<boolean> {
+        if (Platform.OS !== 'android') return true;
+        try {
+            const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+            return granted === PermissionsAndroid.RESULTS.GRANTED;
+        } catch (err) { return false; }
+    }
 
-        if (this.isCapturing) {
-            console.warn("[WhisperService] Already capturing. Skipping start request.");
-            return;
-        }
+    public async startTranscribing(onUpdate: (text: string, isFinal: boolean) => void): Promise<void> {
+        if (!this.whisperContext || this.isCapturing) return;
 
-        console.log("[WhisperService] Starting real-time audio capture...");
-        
+        const hasPerm = await this.requestMicPermission();
+        if (!hasPerm) return;
+
         try {
             this.isCapturing = true;
-
-            const { stop, subscribe } = await this.whisperContext.transcribeRealtime({
-                language: 'tr', // Force Turkish as requested
+            const { stop, subscribe } = await this.whisperContext.transcribeRealtime({ 
+                language: 'tr',
+                realtime: true 
             });
 
             this.stopTranscriptionCb = stop;
 
-            subscribe((event: any) => {
-                const { data } = event;
-                if (data && data.result) {
-                    onNewSegment(data.result);
+            subscribe((event: any) => { 
+                if (event.data && event.data.result) {
+                    const isFinal = event.data.isFinal === true || event.data.is_final === true;
+                    onUpdate(event.data.result, isFinal); 
                 }
             });
 
         } catch (error) {
             this.isCapturing = false;
-            console.error("[WhisperService] Realtime capture failed:", error);
             throw error;
         }
     }
 
-    /**
-     * Stops the engine and releases the lock.
-     */
     public async stopTranscribing(): Promise<void> {
         if (this.stopTranscriptionCb) {
-            console.log("[WhisperService] Stopping audio capture...");
-            try {
-                await this.stopTranscriptionCb();
-            } catch (e) {
-                console.error("[WhisperService] Error while stopping:", e);
-            } finally {
-                this.stopTranscriptionCb = null;
-                this.isCapturing = false;
-                console.log("[WhisperService] Capture stopped and lock released.");
-            }
+            await this.stopTranscriptionCb();
+            this.stopTranscriptionCb = null;
+            this.isCapturing = false;
         }
     }
 
-    public getStatus(): boolean {
-        return this.isCapturing;
+    /**
+     * RAM TASARRUFU: C++ belleğindeki modeli tamamen siler.
+     */
+    public async release(): Promise<void> {
+        if (this.whisperContext) {
+            try {
+                await this.whisperContext.release();
+                console.log("[WhisperService] RAM serbest bırakıldı.");
+            } catch (e) {
+                console.warn("[WhisperService] Silme uyarısı:", e);
+            }
+            this.whisperContext = null;
+            this.isInitialized = false;
+        }
     }
 }
 
-// Export as a named singleton to match your BufferOrchestrator import
 export const whisperService = new WhisperService();

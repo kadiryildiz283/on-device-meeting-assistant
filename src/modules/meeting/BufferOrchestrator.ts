@@ -1,147 +1,103 @@
-import { Platform } from 'react-native';
-import { whisperService } from '../../services/WhisperService';
+import { whisperService, WhisperModelType } from '../../services/WhisperService';
 import { llamaService } from '../../services/LlamaService';
-import { MeetingController } from '../../database/MeetingController';
+// ZORUNLU KONTROL: Veritabanı modüllerini doğru yollardan import ediyoruz.
+import { MeetingController } from '../../database/MeetingController'; 
 import { MeetingModel } from '../../database/MeetingModel';
 
-export type WhisperModelType = 'tiny' | 'base' | 'small' | 'medium';
-
-/**
- * Manages the lifecycle of a meeting: recording, database persistence, and final AI summary.
- * Switched to "Continuous Recording + Final Summary" architecture for better context retention.
- */
 export class BufferOrchestrator {
-    private isRecording: boolean = false;
     private fullTranscript: string = "";
-    private selectedModel: WhisperModelType = 'small'; 
-    private currentMeeting: MeetingModel | null = null;
-    private isProcessingSummary: boolean = false;
+    private currentPartial: string = ""; 
+    private whisperPref: WhisperModelType = 'tiny';
+    private llamaModelPath: string = '';
+    
+    // Veritabanı ile konuşan asıl obje
+    private activeMeeting: MeetingModel | null = null;
 
-    public onTranscriptionUpdate: ((text: string) => void) | null = null;
-    public onStatusChange: ((status: 'idle' | 'recording' | 'processing') => void) | null = null;
-
-    constructor() {
-        console.log(`[BufferOrchestrator] Initialized for ${Platform.OS}.`);
+    public setPreferences(whisper: WhisperModelType, llamaPath: string) {
+        this.whisperPref = whisper;
+        this.llamaModelPath = llamaPath;
     }
 
-    public setModelPreference(model: WhisperModelType): void {
-        this.selectedModel = model;
-    }
-
-    /**
-     * Starts the meeting session.
-     */
     public async startMeeting(): Promise<void> {
-        if (this.isRecording) return;
-
-        this.isRecording = true;
         this.fullTranscript = "";
-        this.updateStatus('recording');
-
+        this.currentPartial = "";
+        
         try {
-            // 1. Create DB Record
-            const timeString = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-            this.currentMeeting = await MeetingController.createMeeting(`Toplantı ${timeString}`);
-
-            // 2. Initialize STT (LLM initialization is deferred until the end to save RAM)
-            await whisperService.initialize();
-
-            // 3. Start Continuous Listening
-            await this.beginTranscriptionFlow();
-
-            console.log("[BufferOrchestrator] Meeting session started. Listening continuously...");
-        } catch (error) {
-            console.error("[BufferOrchestrator] Failed to start meeting:", error);
-            this.cleanup();
+            // 1. Dinamik başlık atayarak veritabanında (History) yeni satır açıyoruz.
+            const title = `Toplantı - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
+            this.activeMeeting = await MeetingController.createMeeting(title); 
+            console.log(`[Orchestrator] Yeni toplantı DB'ye işlendi: ${this.activeMeeting.id}`);
+        } catch (e) {
+            console.error("[Orchestrator] DB oluşturma hatası:", e);
         }
-    }
 
-    /**
-     * Stops the meeting and triggers the final AI summary.
-     */
-    public async stopMeeting(): Promise<string> {
-        if (!this.isRecording) return "No active recording.";
-
-        console.log("[BufferOrchestrator] Stopping meeting...");
-        this.isRecording = false;
-        this.updateStatus('processing');
-
-        try {
-            // 1. Stop Whisper immediately to free up Audio resources
-            await whisperService.stopTranscribing();
-
-            // 2. Minimum length check
-            if (this.fullTranscript.trim().length < 50) {
-                console.warn("[BufferOrchestrator] Transcript too short for meaningful summary.");
-                this.updateStatus('idle');
-                return "Toplantı çok kısa sürdü, özet çıkarılmadı.";
+        // Whisper her toplantıda taze (fresh) RAM blokuyla başlatılır.
+        await whisperService.initialize(this.whisperPref);
+        
+        await whisperService.startTranscribing(async (text, isFinal) => {
+            if (isFinal) {
+                // 2. Cümle Kesinleşti: Ana metne kalıcı olarak ekle
+                this.fullTranscript += text + " ";
+                this.currentPartial = ""; 
+                
+                if (this.activeMeeting) {
+                    // RASYONEL KARAR: Her kesinleşen cümle anında veritabanına eklenir!
+                    // Llama motoru çöksün veya çökmesin, konuşulan hiçbir kelime kaybolmaz.
+                    await MeetingController.addTranscript(this.activeMeeting, text); 
+                }
+            } else {
+                // Cümle devam ediyor: Sadece arayüzde göstermek için hafızada tut
+                this.currentPartial = text;
             }
 
-            // 3. Initialize Llama only when needed (Lazy Loading)
-            await llamaService.initialize();
-
-            // 4. Generate Final Summary
-            console.log("[BufferOrchestrator] Triggering final summary for the entire session...");
-            const finalSummary = await llamaService.summarize(this.fullTranscript);
-
-            // 5. Save Summary to DB
-            if (this.currentMeeting && finalSummary) {
-                await MeetingController.updateSummary(this.currentMeeting, finalSummary);
-            }
-
-            // 6. Final Cleanup
-            await llamaService.release();
-            this.updateStatus('idle');
-            
-            console.log("[BufferOrchestrator] Meeting finalized. Summary generated.");
-            return finalSummary;
-
-        } catch (error) {
-            console.error("[BufferOrchestrator] Error during stop and summarize:", error);
-            this.updateStatus('idle');
-            return "Özetleme sırasında teknik bir hata oluştu.";
-        }
-    }
-
-    private async beginTranscriptionFlow(): Promise<void> {
-        await whisperService.startTranscribing((newSegment: string) => {
-            const cleanSegment = newSegment.trim();
-            if (this.isValidNewSegment(cleanSegment)) {
-                this.processIncomingText(cleanSegment);
+            // Arayüze "Kalıcı Metin + O an söylenenler" birleşimini gönder
+            if (this.onTranscriptionUpdate) {
+                this.onTranscriptionUpdate(this.fullTranscript + this.currentPartial);
             }
         });
     }
 
-    private isValidNewSegment(segment: string): boolean {
-        if (segment.length === 0) return false;
-        // Basic deduplication for overlapping segments
-        const lastPart = this.fullTranscript.slice(-segment.length * 2);
-        return !lastPart.includes(segment);
-    }
-
-    private processIncomingText(text: string): void {
-        const separator = this.fullTranscript.length > 0 ? " " : "";
-        this.fullTranscript += separator + text;
-
-        if (this.currentMeeting) {
-            MeetingController.addTranscript(this.currentMeeting, text).catch(e => 
-                console.error("[BufferOrchestrator] Failed to save DB:", e)
-            );
+    public async stopMeeting(): Promise<string> {
+        // 1. Mikrofonu Kapat
+        await whisperService.stopTranscribing();
+        
+        // 2. VETO KORUMASI (RAM YÖNETİMİ): Llama'ya 12GB RAM'in tamamını bırakmak için
+        // Whisper motorunu C++ belleğinden tamamen yok ediyoruz.
+        await whisperService.release();
+        
+        // Varsa havada kalan son yarım metni de DB'ye yaz
+        if (this.currentPartial) {
+            this.fullTranscript += this.currentPartial + " ";
+            if (this.activeMeeting) {
+                await MeetingController.addTranscript(this.activeMeeting, this.currentPartial);
+            }
         }
 
-        if (this.onTranscriptionUpdate) {
-            this.onTranscriptionUpdate(this.fullTranscript);
+        if (!this.llamaModelPath) return "Llama modeli seçilmedi.";
+        
+        // 3. LLM Analizi Başlıyor
+        // Whisper RAM'den silindiği için Llama artık tüm gücüyle (crash vermeden) yüklenebilir.
+        await llamaService.initialize(this.llamaModelPath);
+        
+        // LlamaService içerisindeki Artımlı (Incremental) algoritma çalışır
+        const summary = await llamaService.summarize(this.fullTranscript);
+        
+        // Llama işini bitirince onu da RAM'den sil. (Telefon soğumaya geçer)
+        await llamaService.release(); 
+        
+        // 4. Veritabanını Güncelle
+        if (this.activeMeeting) {
+            // Toplantı objesine SADECE nihai özeti yapıştırıyoruz.
+            await MeetingController.updateSummary(this.activeMeeting, summary); 
+            this.activeMeeting = null;
         }
+        
+        return summary;
     }
 
-    private updateStatus(status: 'idle' | 'recording' | 'processing'): void {
-        if (this.onStatusChange) this.onStatusChange(status);
-    }
-
-    private cleanup(): void {
-        this.isRecording = false;
-        this.updateStatus('idle');
-    }
+    // Callbacks for UI (MeetingScreen)
+    public onTranscriptionUpdate: ((text: string) => void) | null = null;
+    public onStatusChange: ((status: string) => void) | null = null;
 }
 
 export const orchestrator = new BufferOrchestrator();
