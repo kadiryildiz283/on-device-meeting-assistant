@@ -6,3 +6,4 @@
 6. ai'nin sistem promptu geliştirilmeli.
 7. readme.md dosyası güncellenmeli.
 8. geçmiş toplantılar silinebilmeli, kopyala tuşu olmalı.
+9. toplantıda saat ve zaman değerleri yazmıyor konuşmalarda.
