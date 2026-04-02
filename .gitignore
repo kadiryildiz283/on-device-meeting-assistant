@@ -1,3 +1,18 @@
+# AI Models
+*.gguf
+*.bin
+/assets/models/
+/android/app/src/main/assets/*.gguf
+/android/app/src/main/assets/*.bin
+
+# Large Binary Files
+*.weights
+*.onnx
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
 # OSX
 #
 .DS_Store
