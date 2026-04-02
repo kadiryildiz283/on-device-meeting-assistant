@@ -1,4 +1,3 @@
-cat << 'EOF' > README.md
 # 🎙️ ConferenceAi: On-Device AI Meeting Assistant
 
 Gizlilik odaklı, %100 çevrimdışı çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
