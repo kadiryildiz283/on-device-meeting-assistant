@@ -75,3 +75,4 @@ Thumbs.db
 **/fastlane/Preview.html
 **/fastlane/screenshots
 **/fastlane/test_output
+.aider*
