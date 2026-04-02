@@ -1,5 +1,6 @@
 import { initLlama, LlamaContext } from 'llama.rn';
 import RNFS from 'react-native-fs';
+import { MODEL_PATH } from './ModelDownloader';
 
 export class LlamaService {
     private llamaContext: LlamaContext | null = null;
@@ -8,7 +9,7 @@ export class LlamaService {
     public async initialize(): Promise<void> {
         if (this.isInitialized) return;
 
-        const modelPath = `${RNFS.ExternalStorageDirectoryPath}/Download/qwen2.5-7b-instruct-q4_k_m.gguf`;
+        const modelPath = MODEL_PATH;
 
         try {
             // 1. Dosya Kontrolü

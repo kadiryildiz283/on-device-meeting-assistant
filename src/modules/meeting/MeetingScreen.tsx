@@ -2,15 +2,39 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, PermissionsAndroid, ScrollView, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { orchestrator } from './BufferOrchestrator';
+import { ModelDownloader } from '../../services/ModelDownloader';
 
 export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     const [isRecording, setIsRecording] = useState(false);
     const [transcript, setTranscript] = useState("Sesi dinlemek için 'Toplantıyı Başlat' butonuna basın...");
+    
+    const [isModelReady, setIsModelReady] = useState(false);
+    const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
     useEffect(() => {
         orchestrator.onTranscriptionUpdate = (text: string) => { setTranscript(text); };
+        
+        // Modelin varlığını kontrol et
+        ModelDownloader.checkModelExists().then(exists => {
+            setIsModelReady(exists);
+        });
+
         return () => { orchestrator.onTranscriptionUpdate = null; };
     }, []);
+
+    const handleDownloadModel = async () => {
+        try {
+            setDownloadProgress(0);
+            await ModelDownloader.downloadModel((progress) => {
+                setDownloadProgress(progress);
+            });
+            setIsModelReady(true);
+            setDownloadProgress(null);
+        } catch (error) {
+            console.error("İndirme hatası:", error);
+            setDownloadProgress(null);
+        }
+    };
 
     const requestMicrophonePermission = async () => {
         if (Platform.OS !== 'android') return true;
@@ -46,14 +70,28 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             </View>
 
             <View style={styles.container}>
-                <TouchableOpacity 
-                    onPress={toggleMeeting}
-                    style={[styles.recordBtn, { backgroundColor: isRecording ? '#ff4444' : '#00C851' }]}
-                >
-                    <Text style={styles.recordBtnText}>
-                        {isRecording ? "🔴 Kaydı Durdur" : "🎙️ Toplantıyı Başlat"}
-                    </Text>
-                </TouchableOpacity>
+                {!isModelReady ? (
+                    <TouchableOpacity 
+                        onPress={handleDownloadModel}
+                        disabled={downloadProgress !== null}
+                        style={[styles.recordBtn, { backgroundColor: '#007BFF' }]}
+                    >
+                        <Text style={styles.recordBtnText}>
+                            {downloadProgress !== null 
+                                ? `📥 Model İndiriliyor... %${downloadProgress}` 
+                                : "📥 Yapay Zeka Modelini İndir (4.68 GB)"}
+                        </Text>
+                    </TouchableOpacity>
+                ) : (
+                    <TouchableOpacity 
+                        onPress={toggleMeeting}
+                        style={[styles.recordBtn, { backgroundColor: isRecording ? '#ff4444' : '#00C851' }]}
+                    >
+                        <Text style={styles.recordBtnText}>
+                            {isRecording ? "🔴 Kaydı Durdur" : "🎙️ Toplantıyı Başlat"}
+                        </Text>
+                    </TouchableOpacity>
+                )}
 
                 <ScrollView style={styles.transcriptContainer}>
                     <Text style={styles.transcriptText}>{transcript}</Text>
