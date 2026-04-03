@@ -4,10 +4,9 @@ import RNFS from 'react-native-fs';
 export class LlamaService {
     private llamaContext: LlamaContext | null = null;
     private isInitialized: boolean = false;
-    private readonly MAX_CHARS = 3500; // Safe limit to avoid exceeding 2048 context window
+    private readonly MAX_CHARS = 3500; 
 
     public async initialize(modelPath: string): Promise<void> {
-        // Clear memory if already loaded
         if (this.isInitialized) await this.release();
 
         try {
@@ -20,7 +19,7 @@ export class LlamaService {
                 model: modelPath,
                 use_mlock: true, 
                 n_ctx: 2048,
-                n_threads: 4, // Optimal for ARM architectures (Performance Cores)
+                n_threads: 4, 
             });
             
             this.isInitialized = true;
@@ -31,9 +30,6 @@ export class LlamaService {
         }
     }
 
-    /**
-     * Splits long transcripts into logical chunks without breaking sentences in half.
-     */
     private splitIntoChunks(text: string): string[] {
         const chunks: string[] = [];
         let i = 0;
@@ -41,7 +37,6 @@ export class LlamaService {
         while (i < text.length) {
             let end = i + this.MAX_CHARS;
             if (end < text.length) {
-                // Find the last period to make a safe cut
                 const lastPoint = text.lastIndexOf('.', end);
                 if (lastPoint > i) end = lastPoint + 1;
             }
@@ -52,9 +47,6 @@ export class LlamaService {
         return chunks;
     }
 
-    /**
-     * Executes inference for a given prompt with deterministic settings.
-     */
     private async runCompletion(prompt: string, maxTokens: number): Promise<string> {
         if (!this.llamaContext) throw new Error("LlamaContext is null");
 
@@ -62,7 +54,8 @@ export class LlamaService {
         await this.llamaContext.completion({
             prompt,
             n_predict: maxTokens,
-            temperature: 0.1, // Near-zero for deterministic, factual outputs
+            // Modeli halüsinasyondan uzak tutup sadece gerçeğe odaklamak için temperature'ı sıfıra yaklaştırıyoruz.
+            temperature: 0.1, 
             stop: ["<|im_end|>", "<|im_start|>"],
         }, (res) => { 
             result += res.token; 
@@ -71,38 +64,54 @@ export class LlamaService {
         return result.trim();
     }
 
-    /**
-     * Incrementally summarizes the transcript to handle infinite length safely.
-     */
     public async summarize(text: string): Promise<string> {
-        if (!this.llamaContext) return "Error: LLM not ready.";
+        if (!this.llamaContext) return "Error: LLM hazır değil.";
 
-        const chunks = this.splitIntoChunks(text);
-        let runningSummary = ""; // Holds the accumulated context
+        // 1. FİLTRE: Eğer metin çok kısaysa boşuna modeli yorma ve saçmalamasını engelle.
+        const cleanText = text.trim();
+        if (cleanText.length < 25) {
+            return "Toplantı kaydı, yapay zekanın anlamlı bir özet çıkarabilmesi için çok kısa veya anlaşılamadı.";
+        }
 
-        console.log(`[LlamaService] Transcript divided into ${chunks.length} chunks.`);
+        const chunks = this.splitIntoChunks(cleanText);
+        let runningSummary = ""; 
+
+        console.log(`[LlamaService] Metin ${chunks.length} parçaya bölündü.`);
 
         for (let i = 0; i < chunks.length; i++) {
-            console.log(`[LlamaService] Processing chunk ${i + 1}/${chunks.length}...`);
+            console.log(`[LlamaService] Chunk işleniyor ${i + 1}/${chunks.length}...`);
             
-            const prompt = `<|im_start|>system\nSen profesyonel bir toplantı analistisin. Önceki özet bilgilerini ve yeni gelen metni birleştirerek güncel bir analiz hazırla.<|im_end|>\n<|im_start|>user\nMevcut Durum Özeti:\n${runningSummary || "Henüz özet yok."}\n\nYeni Gelen Konuşma Metni:\n${chunks[i]}\n\nLütfen bu verileri kullanarak şu formatta kesin bir güncelleme yap:\n1. Konuşmacılar:\n2. Ana Konu:\n3. Alınan Kararlar:\n4. Soru İşareti Kalan Kısımlar:\n5. Genel Özet:<|im_end|>\n<|im_start|>assistant\n`;
+            // 2. RASYONEL PROMPT: Boşluk doldurma (fill-in-the-blanks) yerine DİREKT EMİR veriyoruz.
+            const prompt = `<|im_start|>system
+Sen net, profesyonel ve Türkçe konuşan bir toplantı analistisin. Asla "[konuşmacılar]", "[kararlar]" gibi köşeli parantez içeren şablon kelimeler (placeholder) kullanma. SADECE sana verilen metindeki gerçek bilgileri yaz. Metinde bir bilgi yoksa "Belirtilmedi" de.<|im_end|>
+<|im_start|>user
+[ÖNCEKİ ÖZET]
+${runningSummary || "Henüz özet yok, bu ilk kısım."}
+
+[YENİ TOPLANTI METNİ]
+"${chunks[i]}"
+
+[GÖREV]
+Yukarıdaki "Yeni Toplantı Metni"ni analiz et. Çıkardığın GERÇEK bilgileri kullanarak aşağıdaki başlıkları içeren bir rapor yaz:
+- Katılımcılar
+- Ana Konu
+- Alınan Kararlar
+- Genel Özet<|im_end|>
+<|im_start|>assistant
+`;
 
             runningSummary = await this.runCompletion(prompt, 600);
         }
 
-        // Returns only the final LLM output
         return runningSummary;
     }
 
-    /**
-     * Destroys the C++ context to free up physical RAM.
-     */
     public async release(): Promise<void> {
         if (this.llamaContext) {
             await this.llamaContext.release();
             this.llamaContext = null;
             this.isInitialized = false;
-            console.log("[LlamaService] RAM completely released.");
+            console.log("[LlamaService] RAM serbest bırakıldı.");
         }
     }
 }
