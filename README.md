@@ -1,6 +1,6 @@
 # 🎙️ ConferenceAi: On-Device AI Meeting Assistant
 
-Gizlilik odaklı, %100 çevrimdışı çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
+Gizlilik odaklı, %100 çevrimdışı çalışan ve yüksek performanslı mobil cihazlariçin optimize edilmiş akıllı toplantı asistanı.
 
 ## 🌟 Temel Özellikler
 - **Stabil STT (Batch Processing):** `whisper.rn` (ggml-small/tiny) kullanılarak yüksek doğrulukta, C++ çökmelerine (Segmentation Fault) karşı korumalı ses-metin dökümü.
@@ -22,7 +22,7 @@ Uygulama, mobil cihazlardaki donanım limitlerini aşmamak için doğrusal bir b
 ### Gereksinimler
 - **Node.js:** v22.x
 - **Android:** SDK 34+ / **iOS:** Xcode 15+
-- **Donanım:** En az 8GB RAM'li fiziksel cihaz (Yüksek GPU gücü önerilir).
+- **Donanım:** En az 6GB RAM'li fiziksel cihazlar.
 
 ### 1. Bağımlılıkların Kurulumu
 Projede stabiliteyi bozduğu için `react-native-sherpa-onnx` ve türevi paketler terk edilmiştir. Temiz bir kurulum için:
