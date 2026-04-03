@@ -1,19 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
     View, 
     Text, 
     StyleSheet, 
-    FlatList, 
     TouchableOpacity, 
     ActivityIndicator, 
     Modal,
-    Alert
+    Alert,
+    ScrollView,
+    PermissionsAndroid,
+    Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RNFS from 'react-native-fs';
 import { Theme } from '../../core/theme/Theme';
 import { GlassCard } from '../../components/GlassCard';
 import { orchestrator } from './BufferOrchestrator';
+import type { WhisperModelType } from '../../services/WhisperService';
 
 type LLMType = '1.5B' | '3B' | '7B';
 
@@ -23,61 +26,67 @@ const LLM_REGISTRY: Record<LLMType, { filename: string; url: string; size: strin
     '7B': { filename: 'qwen2.5-7b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf?download=true', size: '4.7 GB' }
 };
 
-// Constants for Sherpa Kroko Model
-const SHERPA_DIR = `${RNFS.DocumentDirectoryPath}/sherpa_kroko_64l`;
-const SHERPA_BASE_URL = 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/tr/kroko_64l';
-const SHERPA_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'];
-
-interface TranscriptItem { id: string; time: string; text: string; }
-
 export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
+    // Core States
     const [isRecording, setIsRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
-    const [transcriptFeed, setTranscriptFeed] = useState<TranscriptItem[]>([]);
+    const [pipelineStatus, setPipelineStatus] = useState<string>('SİSTEM BEKLEMEDE');
+    const [finalSummary, setFinalSummary] = useState<string | null>(null);
     
+    // Config States
     const [settingsVisible, setSettingsVisible] = useState(false);
     const [llamaType, setLlamaType] = useState<LLMType>('1.5B'); 
+    const [whisperType, setWhisperType] = useState<WhisperModelType>('small');
     
+    // Download States (Sadece LLM için)
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0);
-    const [downloadTask, setDownloadTask] = useState<string>(''); 
-
-    const lastProcessedLength = useRef(0);
 
     useEffect(() => {
-        orchestrator.onTranscriptionUpdate = (fullText: string) => {
-            const now = new Date();
-            const blockId = Math.floor(now.getTime() / (5 * 60 * 1000)).toString();
-            const timeString = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-
-            setTranscriptFeed(prev => {
-                if (prev.length === 0) {
-                    lastProcessedLength.current = 0;
-                    return [{ id: blockId, time: timeString, text: fullText }];
-                }
-                const lastItem = prev[prev.length - 1];
-                if (lastItem.id === blockId) {
-                    const currentBlockText = fullText.slice(lastProcessedLength.current);
-                    const updatedList = [...prev];
-                    updatedList[updatedList.length - 1] = { ...lastItem, text: currentBlockText };
-                    return updatedList;
-                } else {
-                    lastProcessedLength.current = fullText.length;
-                    const newBlockText = fullText.slice(lastProcessedLength.current);
-                    return [...prev, { id: blockId, time: timeString, text: newBlockText }];
-                }
-            });
-        };
-
+        // Orchestrator'dan gelen boru hattı (pipeline) durumlarını dinle ve Türkçeleştir
         orchestrator.onStatusChange = (status: string) => {
-            if (status === 'processing') setIsProcessing(true);
+            switch (status) {
+                case 'recording':
+                    setPipelineStatus('KAYDEDİLİYOR...');
+                    break;
+                case 'processing_audio':
+                    setPipelineStatus('SES DOSYASI İŞLENİYOR...');
+                    break;
+                case 'transcribing':
+                    setPipelineStatus('SES METNE ÇEVRİLİYOR (STT)...');
+                    break;
+                case 'summarizing':
+                    setPipelineStatus('YAPAY ZEKA ANALİZ EDİYOR (LLM)...');
+                    break;
+                case 'idle':
+                    setPipelineStatus('SİSTEM BEKLEMEDE');
+                    break;
+                default:
+                    setPipelineStatus(status.toUpperCase());
+            }
         };
 
         return () => {
-            orchestrator.onTranscriptionUpdate = null;
             orchestrator.onStatusChange = null;
         };
     }, []);
+
+    const requestPermissions = async () => {
+        if (Platform.OS === 'android') {
+            try {
+                const grants = await PermissionsAndroid.requestMultiple([
+                    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+                    PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+                    PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+                ]);
+                return grants['android.permission.RECORD_AUDIO'] === PermissionsAndroid.RESULTS.GRANTED;
+            } catch (err) {
+                console.warn(err);
+                return false;
+            }
+        }
+        return true;
+    };
 
     const getLlamaPath = async (type: LLMType): Promise<string> => {
         const docPath = `${RNFS.DocumentDirectoryPath}/${LLM_REGISTRY[type].filename}`;
@@ -89,61 +98,8 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         return docPath;
     };
 
-    /**
-     * Checks if all 4 required files for Sherpa exist.
-     */
-    const checkSherpaModelExists = async (): Promise<boolean> => {
-        for (const file of SHERPA_FILES) {
-            const exists = await RNFS.exists(`${SHERPA_DIR}/${file}`);
-            if (!exists) return false;
-        }
-        return true;
-    };
-
-    /**
-     * Sequential downloader for multi-file models to prevent OOM / network saturation.
-     */
-    const downloadSherpaModel = async () => {
-        setIsDownloading(true);
-        setSettingsVisible(true);
-        
-        try {
-            const dirExists = await RNFS.exists(SHERPA_DIR);
-            if (!dirExists) await RNFS.mkdir(SHERPA_DIR);
-
-            for (let i = 0; i < SHERPA_FILES.length; i++) {
-                const file = SHERPA_FILES[i];
-                const destPath = `${SHERPA_DIR}/${file}`;
-                
-                if (await RNFS.exists(destPath)) continue;
-
-                setDownloadTask(`STT İndiriliyor: ${file}`);
-                
-                const options: RNFS.DownloadFileOptions = {
-                    fromUrl: `${SHERPA_BASE_URL}/${file}?download=true`,
-                    toFile: destPath,
-                    background: true,
-                    progress: (res) => {
-                        setDownloadProgress(Math.round((res.bytesWritten / res.contentLength) * 100));
-                    },
-                };
-                await RNFS.downloadFile(options).promise;
-            }
-            
-            Alert.alert("Başarılı", "Sherpa STT Modeli kuruldu.");
-        } catch (error) {
-            Alert.alert("Hata", "Sherpa modeli indirilirken hata oluştu.");
-        } finally {
-            setIsDownloading(false);
-            setDownloadTask('');
-        }
-    };
-
     const downloadLlamaModel = (path: string, type: LLMType) => {
         setIsDownloading(true);
-        setDownloadTask(`LLM İndiriliyor: ${type}`);
-        setSettingsVisible(true);
-
         const options: RNFS.DownloadFileOptions = {
             fromUrl: LLM_REGISTRY[type].url,
             toFile: path,
@@ -155,7 +111,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
         RNFS.downloadFile(options).promise.then((result) => {
             if (result.statusCode === 200) {
-                Alert.alert("Başarılı", `${type} modeli yüklendi.`);
+                Alert.alert("Başarılı", `${type} LLM modeli yüklendi.`);
             } else {
                 throw new Error("Download rejected.");
             }
@@ -164,20 +120,11 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             if (await RNFS.exists(path)) await RNFS.unlink(path); 
         }).finally(() => {
             setIsDownloading(false);
-            setDownloadTask('');
+            setDownloadProgress(0);
         });
     };
 
     const handleApplySettings = async () => {
-        const sherpaExists = await checkSherpaModelExists();
-        if (!sherpaExists) {
-            Alert.alert("Eksik Modüller", "Yerel STT motoru için gerekli dosyalar eksik. İndirmek ister misiniz?", [
-                { text: "İptal", style: "cancel" },
-                { text: "İndir (154 MB)", onPress: downloadSherpaModel }
-            ]);
-            return;
-        }
-
         const llamaPath = await getLlamaPath(llamaType);
         const llamaExists = await RNFS.exists(llamaPath);
         
@@ -189,58 +136,75 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             return;
         }
 
-        orchestrator.setPreferences(SHERPA_DIR, llamaPath);
+        // STT (Whisper) modelleri artık assets klasöründen geldiği için dosya kontrolüne gerek yok
+        orchestrator.setPreferences(llamaPath, whisperType);
         setSettingsVisible(false);
     };
 
     const handleToggleRecording = async () => {
         if (isRecording) {
+            // STOP RECORDING & START BATCH PROCESSING
             setIsRecording(false);
             setIsProcessing(true);
-            const summary = await orchestrator.stopMeeting();
+            setFinalSummary(null); // Clear previous summary
+            
+            const summaryResult = await orchestrator.stopMeetingAndProcess();
+            
+            setFinalSummary(summaryResult);
             setIsProcessing(false);
-            setTranscriptFeed([]); 
         } else {
-            const sherpaExists = await checkSherpaModelExists();
+            // START RECORDING
+            const hasPerms = await requestPermissions();
+            if (!hasPerms) {
+                Alert.alert("İzin Hatası", "Mikrofon izni olmadan toplantı kaydedilemez.");
+                return;
+            }
+
             const llamaPath = await getLlamaPath(llamaType);
             const llamaExists = await RNFS.exists(llamaPath);
             
-            if (!sherpaExists || !llamaExists) {
+            if (!llamaExists) {
                 setSettingsVisible(true);
                 return;
             }
 
+            setFinalSummary(null);
             setIsRecording(true);
-            setTranscriptFeed([]); 
-            lastProcessedLength.current = 0; 
-
-            orchestrator.setPreferences(SHERPA_DIR, llamaPath);
+            
+            orchestrator.setPreferences(llamaPath, whisperType);
             await orchestrator.startMeeting();
         }
     };
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* HEADER */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={onOpenMenu} style={styles.iconButton}><Text style={styles.iconText}>☰</Text></TouchableOpacity>
                 <Text style={styles.title}>ConferenceAi</Text>
-                <TouchableOpacity onPress={() => !isRecording && setSettingsVisible(true)} style={styles.iconButton}><Text style={[styles.iconText, isRecording && { opacity: 0.3 }]}>⚙️</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => !isRecording && !isProcessing && setSettingsVisible(true)} style={styles.iconButton}>
+                    <Text style={[styles.iconText, (isRecording || isProcessing) && { opacity: 0.3 }]}>⚙️</Text>
+                </TouchableOpacity>
             </View>
 
+            {/* ACTIVE CONFIG */}
             <View style={styles.activeConfigBar}>
-                <Text style={styles.configText}>STT: <Text style={styles.configHighlight}>KROKO-64L</Text>  |  LLM: <Text style={styles.configHighlight}>{llamaType}</Text></Text>
+                <Text style={styles.configText}>STT: <Text style={styles.configHighlight}>WHISPER {whisperType.toUpperCase()}</Text>  |  LLM: <Text style={styles.configHighlight}>{llamaType}</Text></Text>
             </View>
 
+            {/* SETTINGS MODAL */}
             <Modal visible={settingsVisible} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
                     <GlassCard style={styles.settingsPanel}>
                         <Text style={styles.panelTitle}>Sistem Yapılandırması</Text>
                         
-                        <Text style={styles.label}>STT Motoru</Text>
+                        <Text style={styles.label}>STT Motoru (Yerel Gömülü)</Text>
                         <View style={styles.row}>
-                            <View style={[styles.chip, styles.activeChip]}>
-                                <Text style={styles.activeChipText}>KROKO 64L (INT8)</Text>
-                            </View>
+                            {(['tiny', 'small'] as WhisperModelType[]).map(t => (
+                                <TouchableOpacity key={t} onPress={() => !isDownloading && setWhisperType(t)} style={[styles.chip, whisperType === t && styles.activeChip]}>
+                                    <Text style={[styles.chipText, whisperType === t && styles.activeChipText]}>Whisper {t.charAt(0).toUpperCase() + t.slice(1)}</Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
 
                         <Text style={styles.label}>LLM Motoru</Text>
@@ -254,7 +218,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
                         {isDownloading ? (
                             <View style={styles.progressContainer}>
-                                <Text style={styles.progressText}>{downloadTask}... {downloadProgress}%</Text>
+                                <Text style={styles.progressText}>LLM İndiriliyor... {downloadProgress}%</Text>
                                 <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${downloadProgress}%` }]} /></View>
                             </View>
                         ) : (
@@ -264,22 +228,50 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
                 </View>
             </Modal>
 
-            <View style={styles.feedContainer}>
-                <View style={styles.feedHeader}>
-                    {isRecording ? <View style={styles.recordingDot} /> : null}
-                    <Text style={styles.feedTitle}>{isProcessing ? "YAPAY ZEKA ANALİZ EDİYOR..." : isRecording ? "CANLI LOG AKIŞI" : "SİSTEM BEKLEMEDE"}</Text>
-                </View>
-                {transcriptFeed.length === 0 && !isRecording && !isProcessing && (
-                    <View style={styles.emptyFeed}><Text style={styles.emptyText}>Dökümü başlatmak için aşağıdaki butonu kullanın.</Text></View>
+            {/* MAIN CONTENT AREA */}
+            <View style={styles.mainContent}>
+                {finalSummary ? (
+                    // SHOW FINAL SUMMARY
+                    <View style={styles.summaryContainer}>
+                        <View style={styles.summaryHeader}>
+                            <Text style={styles.summaryTitle}>TOPLANTI ANALİZİ</Text>
+                        </View>
+                        <ScrollView style={styles.summaryScroll} contentContainerStyle={{ padding: 16 }}>
+                            <Text style={styles.summaryText}>{finalSummary}</Text>
+                        </ScrollView>
+                    </View>
+                ) : (
+                    // SHOW STATUS INDICATOR
+                    <View style={styles.statusContainer}>
+                        {isRecording ? (
+                            <View style={[styles.statusDot, styles.dotRecording]} />
+                        ) : isProcessing ? (
+                            <ActivityIndicator size="large" color={Theme.colors.primary} style={{ marginBottom: 16 }} />
+                        ) : (
+                            <View style={[styles.statusDot, styles.dotIdle]} />
+                        )}
+                        <Text style={[styles.statusText, isRecording && styles.textRecording]}>{pipelineStatus}</Text>
+                        
+                        {!isRecording && !isProcessing && (
+                            <Text style={styles.idleSubText}>Toplantıyı kaydetmeye başlamak için aşağıdaki butonu kullanın. Uygulama sesi arka planda kaydedecek ve bitiminde analiz edecektir.</Text>
+                        )}
+                    </View>
                 )}
-                <FlatList data={transcriptFeed} keyExtractor={item => item.id} renderItem={({ item }) => (
-                    <View style={styles.logRow}><Text style={styles.timestamp}>[{item.time}]</Text><Text style={styles.logText}>{item.text}</Text></View>
-                )} contentContainerStyle={styles.feedList} showsVerticalScrollIndicator={true} />
             </View>
 
+            {/* FOOTER ACTION BUTTON */}
             <View style={styles.footer}>
-                <GlassCard onPress={isProcessing || isDownloading ? undefined : handleToggleRecording} style={[styles.actionButton, isRecording ? styles.stopButton : styles.startButton]}>
-                    {isProcessing ? <ActivityIndicator color={Theme.colors.primary} size="large" /> : <Text style={[styles.actionText, isRecording ? styles.stopText : styles.startText]}>{isRecording ? "TOPLANTIYI BİTİR VE ANALİZ ET" : "TOPLANTIYI BAŞLAT"}</Text>}
+                <GlassCard 
+                    onPress={isProcessing || isDownloading ? undefined : handleToggleRecording} 
+                    style={[styles.actionButton, isRecording ? styles.stopButton : styles.startButton, isProcessing && { opacity: 0.5 }]}
+                >
+                    {isProcessing ? (
+                        <Text style={styles.processingText}>İŞLEM DEVAM EDİYOR...</Text>
+                    ) : (
+                        <Text style={[styles.actionText, isRecording ? styles.stopText : styles.startText]}>
+                            {isRecording ? "KAYDI BİTİR VE ANALİZ ET" : "TOPLANTIYI BAŞLAT"}
+                        </Text>
+                    )}
                 </GlassCard>
             </View>
         </SafeAreaView>
@@ -293,6 +285,8 @@ const styles = StyleSheet.create({
     title: { fontSize: 22, fontWeight: '700', color: Theme.colors.text, letterSpacing: 0.5 },
     activeConfigBar: { paddingHorizontal: 24, marginBottom: 20, alignItems: 'center' },
     configText: { fontSize: 12, color: Theme.colors.textMuted, letterSpacing: 1 }, configHighlight: { color: Theme.colors.primary, fontWeight: '700' },
+    
+    // Modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', padding: 24 },
     settingsPanel: { padding: 24, borderRadius: Theme.radius.lg, backgroundColor: '#111' },
     panelTitle: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 24 },
@@ -303,10 +297,26 @@ const styles = StyleSheet.create({
     chipText: { color: Theme.colors.textMuted, fontWeight: '600', fontSize: 13, textAlign: 'center' }, activeChipText: { color: Theme.colors.primary },
     applyBtn: { marginTop: 32, backgroundColor: Theme.colors.primary, padding: 16, borderRadius: Theme.radius.md, alignItems: 'center' }, applyText: { color: '#fff', fontWeight: '700', letterSpacing: 1 },
     progressContainer: { marginTop: 32 }, progressText: { color: Theme.colors.textMuted, fontSize: 12, marginBottom: 8, textAlign: 'center' }, progressBarBg: { height: 6, backgroundColor: Theme.colors.glassBorder, borderRadius: 3, overflow: 'hidden' }, progressBarFill: { height: '100%', backgroundColor: Theme.colors.primary },
-    feedContainer: { flex: 1, marginHorizontal: 24, marginBottom: 24, backgroundColor: Theme.colors.glassSurface, borderRadius: Theme.radius.lg, borderWidth: 1, borderColor: Theme.colors.glassBorder, overflow: 'hidden' },
-    feedHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: Theme.colors.glassBorder, backgroundColor: 'rgba(0,0,0,0.4)' },
-    recordingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Theme.colors.error, marginRight: 8 }, feedTitle: { fontSize: 11, fontWeight: '700', color: Theme.colors.textMuted, letterSpacing: 1.5 },
-    feedList: { padding: 16 }, emptyFeed: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }, emptyText: { color: Theme.colors.textMuted, textAlign: 'center', fontSize: 14, lineHeight: 22 },
-    logRow: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' }, timestamp: { fontSize: 12, fontFamily: 'monospace', color: Theme.colors.textMuted, marginRight: 8, marginTop: 2 }, logText: { flex: 1, fontSize: 14, lineHeight: 20, color: Theme.colors.text, fontWeight: '400' },
-    footer: { paddingHorizontal: 24, paddingBottom: 32 }, actionButton: { alignItems: 'center', paddingVertical: 18, borderRadius: Theme.radius.lg, borderWidth: 1 }, startButton: { backgroundColor: 'rgba(99, 102, 241, 0.1)', borderColor: 'rgba(99, 102, 241, 0.3)' }, startText: { color: Theme.colors.primary, fontWeight: '700', letterSpacing: 1 }, stopButton: { backgroundColor: 'rgba(255, 107, 107, 0.1)', borderColor: 'rgba(255, 107, 107, 0.3)' }, stopText: { color: Theme.colors.error, fontWeight: '700', letterSpacing: 1 }
+    
+    // Main Content
+    mainContent: { flex: 1, marginHorizontal: 24, marginBottom: 24 },
+    
+    // Status UI
+    statusContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Theme.colors.glassSurface, borderRadius: Theme.radius.lg, borderWidth: 1, borderColor: Theme.colors.glassBorder, padding: 24 },
+    statusDot: { width: 16, height: 16, borderRadius: 8, marginBottom: 16 },
+    dotRecording: { backgroundColor: Theme.colors.error, shadowColor: Theme.colors.error, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 10, elevation: 5 },
+    dotIdle: { backgroundColor: Theme.colors.glassBorder },
+    statusText: { fontSize: 16, fontWeight: '700', color: Theme.colors.text, letterSpacing: 1, textAlign: 'center' },
+    textRecording: { color: Theme.colors.error },
+    idleSubText: { fontSize: 13, color: Theme.colors.textMuted, textAlign: 'center', marginTop: 16, lineHeight: 20 },
+    
+    // Summary UI
+    summaryContainer: { flex: 1, backgroundColor: Theme.colors.glassSurface, borderRadius: Theme.radius.lg, borderWidth: 1, borderColor: Theme.colors.glassBorder, overflow: 'hidden' },
+    summaryHeader: { padding: 16, borderBottomWidth: 1, borderBottomColor: Theme.colors.glassBorder, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center' },
+    summaryTitle: { fontSize: 12, fontWeight: '700', color: Theme.colors.primary, letterSpacing: 2 },
+    summaryScroll: { flex: 1 },
+    summaryText: { fontSize: 14, lineHeight: 24, color: Theme.colors.text, fontWeight: '400' },
+    
+    // Footer
+    footer: { paddingHorizontal: 24, paddingBottom: 32 }, actionButton: { alignItems: 'center', paddingVertical: 18, borderRadius: Theme.radius.lg, borderWidth: 1 }, startButton: { backgroundColor: 'rgba(99, 102, 241, 0.1)', borderColor: 'rgba(99, 102, 241, 0.3)' }, startText: { color: Theme.colors.primary, fontWeight: '700', letterSpacing: 1 }, stopButton: { backgroundColor: 'rgba(255, 107, 107, 0.1)', borderColor: 'rgba(255, 107, 107, 0.3)' }, stopText: { color: Theme.colors.error, fontWeight: '700', letterSpacing: 1 }, processingText: { color: Theme.colors.textMuted, fontWeight: '700', letterSpacing: 1 }
 });

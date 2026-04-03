@@ -1,48 +1,66 @@
 import { PermissionsAndroid, Platform } from 'react-native';
-import { 
-    createOnlineRecognizer, 
-    OnlineRecognizer,
-    SherpaOnnxAudioRecord 
-} from 'react-native-sherpa-onnx';
+import { fileModelPath } from 'react-native-sherpa-onnx';
+import { createStreamingSTT } from 'react-native-sherpa-onnx/stt';
+import { createPcmLiveStream } from 'react-native-sherpa-onnx/pcm';
+import RNFS from 'react-native-fs';
 
 export class SherpaService {
-    private recognizer: OnlineRecognizer | null = null;
-    private audioRecorder: SherpaOnnxAudioRecord | null = null;
+    private recognizer: any = null;
+    private audioStream: any = null;
     private isInitialized: boolean = false;
     private isCapturing: boolean = false;
 
-    /**
-     * Initializes Sherpa-ONNX with the Kroko INT8 Transducer model.
-     */
     public async initialize(modelDir: string): Promise<void> {
         if (this.isInitialized) return;
         
         try {
-            console.log(`[SherpaService] Loading INT8 ONNX model from: ${modelDir}`);
+            const encoderPath = `${modelDir}/encoder.int8.onnx`;
+            const decoderPath = `${modelDir}/decoder.int8.onnx`;
+            const joinerPath = `${modelDir}/joiner.int8.onnx`;
+            const tokensPath = `${modelDir}/tokens.txt`;
+
+            // Gatekeeper Kontrolü
+            const checks = await Promise.all([
+                RNFS.exists(encoderPath),
+                RNFS.exists(decoderPath),
+                RNFS.exists(joinerPath),
+                RNFS.exists(tokensPath)
+            ]);
+
+            if (checks.includes(false)) {
+                throw new Error("VETO: STT model dosyaları eksik.");
+            }
+
+            console.log(`[SherpaService] Dosyalar tam. C++ Engine başlatılıyor...`);
             
-            this.recognizer = await createOnlineRecognizer({
+            // BUG BYPASS ALGORİTMASI:
+            // Native Wrapper'ın null fırlatmaması için hem kök "modelPath" hem de alt "modelConfig" veriyoruz.
+            this.recognizer = await createStreamingSTT({
+                modelPath: fileModelPath(modelDir), // Wrapper bug'ını engeller
+                modelType: 'transducer', // Engine tipini sabitler
                 featConfig: {
                     sampleRate: 16000,
                     featureDim: 80,
                 },
                 modelConfig: {
                     transducer: {
-                        encoder: `${modelDir}/encoder.int8.onnx`,
-                        decoder: `${modelDir}/decoder.int8.onnx`,
-                        joiner: `${modelDir}/joiner.int8.onnx`,
+                        encoder: fileModelPath(encoderPath),
+                        decoder: fileModelPath(decoderPath),
+                        joiner: fileModelPath(joinerPath),
                     },
-                    tokens: `${modelDir}/tokens.txt`,
-                    numThreads: 4, 
+                    tokens: fileModelPath(tokensPath),
+                    numThreads: 4,
                     debug: false,
                 },
+                enableEndpoint: true,
                 decodingMethod: 'greedy_search',
             });
 
             this.isInitialized = true;
-            console.log("[SherpaService] Sherpa-ONNX engine is active.");
+            console.log("[SherpaService] Sherpa-ONNX motoru aktif.");
         } catch (error: any) {
-            console.error("[SherpaService] Init error:", error.message);
-            throw error;
+            console.error("[SherpaService] Init hatası:", error.message);
+            throw error; 
         }
     }
 
@@ -61,63 +79,66 @@ export class SherpaService {
 
         const hasPerm = await this.requestMicPermission();
         if (!hasPerm) {
-            console.warn("[SherpaService] Mic permission denied.");
+            console.warn("[SherpaService] Mikrofon izni reddedildi.");
             return;
         }
 
         try {
             this.isCapturing = true;
-            this.audioRecorder = new SherpaOnnxAudioRecord();
-            const stream = this.recognizer.createStream();
+            
+            this.audioStream = await createPcmLiveStream({
+                sampleRate: 16000,
+                channels: 1
+            });
 
-            this.audioRecorder.start(16000, (audioSamples: Float32Array) => {
-                if (!this.isCapturing) return;
+            this.audioStream.on('data', async (samples: Float32Array) => {
+                if (!this.isCapturing || !this.recognizer) return;
 
-                stream.acceptWaveform(16000, audioSamples);
+                this.recognizer.acceptWaveform(samples);
                 
-                while (this.recognizer!.isReady(stream)) {
-                    this.recognizer!.decode(stream);
-                }
-
-                const result = this.recognizer!.getResult(stream);
-                const isEndpoint = this.recognizer!.isEndpoint(stream);
-
-                if (result.text) {
+                const result = await this.recognizer.getResult();
+                
+                if (result && result.text) {
+                    const isEndpoint = await this.recognizer.isEndpoint();
                     onUpdate(result.text, isEndpoint);
-                }
 
-                if (isEndpoint) {
-                    this.recognizer!.reset(stream);
+                    if (isEndpoint) {
+                        await this.recognizer.reset();
+                    }
                 }
             });
 
+            await this.audioStream.start();
+            console.log("[SherpaService] Mikrofon kaydı başladı.");
+
         } catch (error) {
             this.isCapturing = false;
+            console.error("[SherpaService] Kayıt başlatma hatası:", error);
             throw error;
         }
     }
 
     public async stopTranscribing(): Promise<void> {
-        if (this.audioRecorder && this.isCapturing) {
-            this.audioRecorder.stop();
-            this.audioRecorder = null;
-            this.isCapturing = false;
-            console.log("[SherpaService] Mic feed stopped.");
+        this.isCapturing = false;
+
+        if (this.audioStream) {
+            await this.audioStream.stop();
+            this.audioStream = null;
+            console.log("[SherpaService] Mikrofon yayını durduruldu.");
         }
     }
 
-    /**
-     * VETO PROTOCOL: Completely nukes the C++ context to prevent OOM during LLM phase.
-     */
     public async release(): Promise<void> {
+        await this.stopTranscribing();
+        
         if (this.recognizer) {
             try {
-                // Remove pointer reference to allow Garbage Collection
-                this.recognizer = null; 
-                console.log("[SherpaService] RAM released.");
+                await this.recognizer.destroy();
+                console.log("[SherpaService] RAM serbest bırakıldı (Engine destroyed).");
             } catch (e) {
-                console.warn("[SherpaService] Release warning:", e);
+                console.warn("[SherpaService] Release uyarısı:", e);
             }
+            this.recognizer = null;
             this.isInitialized = false;
         }
     }
