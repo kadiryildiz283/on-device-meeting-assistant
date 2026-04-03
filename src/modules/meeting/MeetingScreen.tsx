@@ -15,26 +15,18 @@ import { Theme } from '../../core/theme/Theme';
 import { GlassCard } from '../../components/GlassCard';
 import { orchestrator } from './BufferOrchestrator';
 
-type STTType = 'tiny' | 'small';
 type LLMType = '1.5B' | '3B' | '7B';
 
 const LLM_REGISTRY: Record<LLMType, { filename: string; url: string; size: string }> = {
-    '1.5B': {
-        filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
-        url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true',
-        size: '1.1 GB'
-    },
-    '3B': {
-        filename: 'qwen2.5-3b-instruct-q4_k_m.gguf',
-        url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true',
-        size: '2.2 GB'
-    },
-    '7B': {
-        filename: 'qwen2.5-7b-instruct-q4_k_m.gguf',
-        url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf?download=true',
-        size: '4.7 GB'
-    }
+    '1.5B': { filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true', size: '1.1 GB' },
+    '3B': { filename: 'qwen2.5-3b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true', size: '2.2 GB' },
+    '7B': { filename: 'qwen2.5-7b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf?download=true', size: '4.7 GB' }
 };
+
+// Constants for Sherpa Kroko Model
+const SHERPA_DIR = `${RNFS.DocumentDirectoryPath}/sherpa_kroko_64l`;
+const SHERPA_BASE_URL = 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/tr/kroko_64l';
+const SHERPA_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'];
 
 interface TranscriptItem { id: string; time: string; text: string; }
 
@@ -45,10 +37,10 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     
     const [settingsVisible, setSettingsVisible] = useState(false);
     const [llamaType, setLlamaType] = useState<LLMType>('1.5B'); 
-    const [sttType, setSttType] = useState<STTType>('tiny');
     
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0);
+    const [downloadTask, setDownloadTask] = useState<string>(''); 
 
     const lastProcessedLength = useRef(0);
 
@@ -87,36 +79,75 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         };
     }, []);
 
-    /**
-     * Akıllı Yol Bulucu (Path Finder)
-     * Eğer kullanıcı 7B'yi daha önce manuel olarak Download klasörüne attıysa onu kullanır.
-     * Yoksa uygulamanın kendi güvenli dizinini (DocumentDirectoryPath) gösterir.
-     */
     const getLlamaPath = async (type: LLMType): Promise<string> => {
         const docPath = `${RNFS.DocumentDirectoryPath}/${LLM_REGISTRY[type].filename}`;
-        
         if (type === '7B') {
             const manualPath = '/storage/emulated/0/Download/qwen2.5-7b-instruct-q4_k_m.gguf';
             const manualExists = await RNFS.exists(manualPath);
             if (manualExists) return manualPath;
         }
-        
         return docPath;
     };
 
     /**
-     * İndirme işlemini başlatan ana motor.
+     * Checks if all 4 required files for Sherpa exist.
      */
-    const startDownloadProcess = (path: string, type: LLMType) => {
+    const checkSherpaModelExists = async (): Promise<boolean> => {
+        for (const file of SHERPA_FILES) {
+            const exists = await RNFS.exists(`${SHERPA_DIR}/${file}`);
+            if (!exists) return false;
+        }
+        return true;
+    };
+
+    /**
+     * Sequential downloader for multi-file models to prevent OOM / network saturation.
+     */
+    const downloadSherpaModel = async () => {
         setIsDownloading(true);
-        setDownloadProgress(0);
-        setSettingsVisible(true); // İndirme çubuğunu göstermek için paneli açık tut
+        setSettingsVisible(true);
+        
+        try {
+            const dirExists = await RNFS.exists(SHERPA_DIR);
+            if (!dirExists) await RNFS.mkdir(SHERPA_DIR);
+
+            for (let i = 0; i < SHERPA_FILES.length; i++) {
+                const file = SHERPA_FILES[i];
+                const destPath = `${SHERPA_DIR}/${file}`;
+                
+                if (await RNFS.exists(destPath)) continue;
+
+                setDownloadTask(`STT İndiriliyor: ${file}`);
+                
+                const options: RNFS.DownloadFileOptions = {
+                    fromUrl: `${SHERPA_BASE_URL}/${file}?download=true`,
+                    toFile: destPath,
+                    background: true,
+                    progress: (res) => {
+                        setDownloadProgress(Math.round((res.bytesWritten / res.contentLength) * 100));
+                    },
+                };
+                await RNFS.downloadFile(options).promise;
+            }
+            
+            Alert.alert("Başarılı", "Sherpa STT Modeli kuruldu.");
+        } catch (error) {
+            Alert.alert("Hata", "Sherpa modeli indirilirken hata oluştu.");
+        } finally {
+            setIsDownloading(false);
+            setDownloadTask('');
+        }
+    };
+
+    const downloadLlamaModel = (path: string, type: LLMType) => {
+        setIsDownloading(true);
+        setDownloadTask(`LLM İndiriliyor: ${type}`);
+        setSettingsVisible(true);
 
         const options: RNFS.DownloadFileOptions = {
             fromUrl: LLM_REGISTRY[type].url,
             toFile: path,
             background: true,
-            progressDivider: 2,
             progress: (res) => {
                 setDownloadProgress(Math.round((res.bytesWritten / res.contentLength) * 100));
             },
@@ -124,47 +155,42 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
         RNFS.downloadFile(options).promise.then((result) => {
             if (result.statusCode === 200) {
-                orchestrator.setPreferences(sttType, path);
-                setTimeout(() => { 
-                    setIsDownloading(false); 
-                    setSettingsVisible(false); 
-                    Alert.alert("Başarılı", `${type} modeli cihaza yüklendi.`);
-                }, 500);
+                Alert.alert("Başarılı", `${type} modeli yüklendi.`);
             } else {
-                throw new Error("İndirme sunucu tarafından reddedildi.");
+                throw new Error("Download rejected.");
             }
-        }).catch(async (error) => {
+        }).catch(async () => {
+            Alert.alert("İndirme Hatası", "LLM indirilemedi.");
+            if (await RNFS.exists(path)) await RNFS.unlink(path); 
+        }).finally(() => {
             setIsDownloading(false);
-            Alert.alert("İndirme Hatası", "Model indirilemedi. Bağlantınızı kontrol edin.");
-            if (await RNFS.exists(path)) await RNFS.unlink(path); // Bozuk dosyayı sil
+            setDownloadTask('');
         });
     };
 
-    /**
-     * Model yoksa kullanıcıya soran Geçit (Gatekeeper) fonksiyonu.
-     */
-    const askForDownload = (path: string, type: LLMType) => {
-        Alert.alert(
-            "Yerel Model Bulunamadı",
-            `Seçtiğiniz ${type} modeli cihazınızda yüklü değil.\nİndirme Boyutu: ${LLM_REGISTRY[type].size}\n\nŞimdi indirmek ister misiniz?`,
-            [
-                { text: "İptal", style: "cancel" },
-                { text: "İndirmeyi Başlat", onPress: () => startDownloadProcess(path, type) }
-            ]
-        );
-    };
-
     const handleApplySettings = async () => {
-        const path = await getLlamaPath(llamaType);
-        const exists = await RNFS.exists(path);
-
-        if (exists) {
-            orchestrator.setPreferences(sttType, path);
-            setSettingsVisible(false);
-        } else {
-            // VETO: Direk indirme! Önce kullanıcıya sor.
-            askForDownload(path, llamaType);
+        const sherpaExists = await checkSherpaModelExists();
+        if (!sherpaExists) {
+            Alert.alert("Eksik Modüller", "Yerel STT motoru için gerekli dosyalar eksik. İndirmek ister misiniz?", [
+                { text: "İptal", style: "cancel" },
+                { text: "İndir (154 MB)", onPress: downloadSherpaModel }
+            ]);
+            return;
         }
+
+        const llamaPath = await getLlamaPath(llamaType);
+        const llamaExists = await RNFS.exists(llamaPath);
+        
+        if (!llamaExists) {
+            Alert.alert("Eksik LLM", `Seçilen ${llamaType} LLM bulunamadı. İndirilsin mi?`, [
+                { text: "İptal", style: "cancel" },
+                { text: "İndir", onPress: () => downloadLlamaModel(llamaPath, llamaType) }
+            ]);
+            return;
+        }
+
+        orchestrator.setPreferences(SHERPA_DIR, llamaPath);
+        setSettingsVisible(false);
     };
 
     const handleToggleRecording = async () => {
@@ -172,26 +198,23 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             setIsRecording(false);
             setIsProcessing(true);
             const summary = await orchestrator.stopMeeting();
-            console.log("[MeetingScreen] AI Analizi Tamamlandı:\n", summary);
             setIsProcessing(false);
             setTranscriptFeed([]); 
         } else {
-            // 1. Başlamadan önce modeli kontrol et
-            const path = await getLlamaPath(llamaType);
-            const exists = await RNFS.exists(path);
+            const sherpaExists = await checkSherpaModelExists();
+            const llamaPath = await getLlamaPath(llamaType);
+            const llamaExists = await RNFS.exists(llamaPath);
             
-            // 2. Model yoksa dur ve sor
-            if (!exists) {
-                askForDownload(path, llamaType);
-                return; // Toplantıyı başlatmayı İPTAL ET
+            if (!sherpaExists || !llamaExists) {
+                setSettingsVisible(true);
+                return;
             }
 
-            // 3. Model varsa sorunsuz başlat
             setIsRecording(true);
             setTranscriptFeed([]); 
             lastProcessedLength.current = 0; 
 
-            orchestrator.setPreferences(sttType, path);
+            orchestrator.setPreferences(SHERPA_DIR, llamaPath);
             await orchestrator.startMeeting();
         }
     };
@@ -205,7 +228,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             </View>
 
             <View style={styles.activeConfigBar}>
-                <Text style={styles.configText}>STT: <Text style={styles.configHighlight}>{sttType.toUpperCase()}</Text>  |  LLM: <Text style={styles.configHighlight}>{llamaType}</Text></Text>
+                <Text style={styles.configText}>STT: <Text style={styles.configHighlight}>KROKO-64L</Text>  |  LLM: <Text style={styles.configHighlight}>{llamaType}</Text></Text>
             </View>
 
             <Modal visible={settingsVisible} transparent animationType="fade">
@@ -213,16 +236,14 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
                     <GlassCard style={styles.settingsPanel}>
                         <Text style={styles.panelTitle}>Sistem Yapılandırması</Text>
                         
-                        <Text style={styles.label}>STT Motoru (Yerel Ses Çözümleme)</Text>
+                        <Text style={styles.label}>STT Motoru</Text>
                         <View style={styles.row}>
-                            {(['tiny', 'small'] as STTType[]).map(t => (
-                                <TouchableOpacity key={t} onPress={() => !isDownloading && setSttType(t)} style={[styles.chip, sttType === t && styles.activeChip]}>
-                                    <Text style={[styles.chipText, sttType === t && styles.activeChipText]}>{t.toUpperCase()}</Text>
-                                </TouchableOpacity>
-                            ))}
+                            <View style={[styles.chip, styles.activeChip]}>
+                                <Text style={styles.activeChipText}>KROKO 64L (INT8)</Text>
+                            </View>
                         </View>
 
-                        <Text style={styles.label}>LLM Motoru (Yerel Yapay Zeka)</Text>
+                        <Text style={styles.label}>LLM Motoru</Text>
                         <View style={styles.row}>
                             {(['1.5B', '3B', '7B'] as LLMType[]).map(t => (
                                 <TouchableOpacity key={t} onPress={() => !isDownloading && setLlamaType(t)} style={[styles.chip, llamaType === t && styles.activeChip]}>
@@ -233,11 +254,11 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
                         {isDownloading ? (
                             <View style={styles.progressContainer}>
-                                <Text style={styles.progressText}>Model İndiriliyor... {downloadProgress}%</Text>
+                                <Text style={styles.progressText}>{downloadTask}... {downloadProgress}%</Text>
                                 <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${downloadProgress}%` }]} /></View>
                             </View>
                         ) : (
-                            <TouchableOpacity onPress={handleApplySettings} style={styles.applyBtn}><Text style={styles.applyText}>UYGULA VE KAPAT</Text></TouchableOpacity>
+                            <TouchableOpacity onPress={handleApplySettings} style={styles.applyBtn}><Text style={styles.applyText}>KONTROL ET VE UYGULA</Text></TouchableOpacity>
                         )}
                     </GlassCard>
                 </View>

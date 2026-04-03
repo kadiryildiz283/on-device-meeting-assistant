@@ -23,10 +23,10 @@ Uygulama, mobil cihazlardaki RAM limitlerini aşmamak için **"Continuous Record
 
 ### Adımlar
 1. `npm install --legacy-peer-deps`
-2. **Model Kurulumu:** 
-   - `ModelDownloader.ts` aracılığıyla `qwen2.5-7b-instruct-q4_k_m.gguf` dosyasını indirin.
-   - Whisper modeli için `src/assets/models/ggml-small.bin` yolunu kontrol edin.
-3. `npx react-native run-android` veya `npx react-native run-ios`
+2. npm install react-native-sherpa-onnx --legacy-peer-deps
+3. npm install @dr.pogodin/react-native-fs --legacy-peer-deps
+4. npx react-native start --reset-cache
+5. `npx react-native run-android` 
 
 ## 📊 Mevcut Durum
 Proje şu anda; ses kaydı, anlık döküm, veritabanı senkronizasyonu ve toplantı sonu özetleme döngüsünü stabil şekilde tamamlamaktadır.
