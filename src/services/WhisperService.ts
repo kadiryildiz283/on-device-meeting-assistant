@@ -1,6 +1,7 @@
 import { initWhisper, WhisperContext } from 'whisper.rn';
+import RNFS from 'react-native-fs';
 
-export type WhisperModelType = 'tiny' | 'small';
+export type WhisperModelType = 'tiny' | 'small' | 'large';
 
 export class WhisperService {
     private whisperContext: WhisperContext | null = null;
@@ -10,10 +11,15 @@ export class WhisperService {
         if (this.isInitialized) return;
         
         try {
-            // Models must be placed in android/app/src/main/assets/models/
-            const modelAsset = modelType === 'tiny' ? require('../assets/models/ggml-tiny.bin') : require('../assets/models/ggml-small.bin');
-            
             console.log(`[WhisperService] Loading model: ${modelType}`);
+            
+            let modelAsset;
+            if (modelType === 'large') {
+                modelAsset = `${RNFS.DocumentDirectoryPath}/ggml-large-v2-q8_0.bin`;
+            } else {
+                modelAsset = modelType === 'tiny' ? require('../assets/models/ggml-tiny.bin') : require('../assets/models/ggml-small.bin');
+            }
+            
             this.whisperContext = await initWhisper({ filePath: modelAsset });
             this.isInitialized = true;
             console.log("[WhisperService] Whisper engine ready.");

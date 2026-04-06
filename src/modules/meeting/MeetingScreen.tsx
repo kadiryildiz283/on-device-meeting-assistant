@@ -26,6 +26,9 @@ const LLM_REGISTRY: Record<LLMType, { filename: string; url: string; size: strin
     '7B': { filename: 'qwen2.5-7b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf?download=true', size: '4.7 GB' }
 };
 
+const WHISPER_LARGE_FILENAME = 'ggml-large-v2-q8_0.bin';
+const WHISPER_LARGE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2-q8_0.bin?download=true';
+
 export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     // Core States
     const [isRecording, setIsRecording] = useState(false);
@@ -98,10 +101,10 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         return docPath;
     };
 
-    const downloadLlamaModel = (path: string, type: LLMType) => {
+    const downloadModel = (path: string, url: string, modelName: string) => {
         setIsDownloading(true);
         const options: RNFS.DownloadFileOptions = {
-            fromUrl: LLM_REGISTRY[type].url,
+            fromUrl: url,
             toFile: path,
             background: true,
             progress: (res) => {
@@ -111,12 +114,12 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
         RNFS.downloadFile(options).promise.then((result) => {
             if (result.statusCode === 200) {
-                Alert.alert("Başarılı", `${type} LLM modeli yüklendi.`);
+                Alert.alert("Başarılı", `${modelName} modeli yüklendi.`);
             } else {
                 throw new Error("Download rejected.");
             }
         }).catch(async () => {
-            Alert.alert("İndirme Hatası", "LLM indirilemedi.");
+            Alert.alert("İndirme Hatası", `${modelName} indirilemedi.`);
             if (await RNFS.exists(path)) await RNFS.unlink(path); 
         }).finally(() => {
             setIsDownloading(false);
@@ -131,12 +134,24 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         if (!llamaExists) {
             Alert.alert("Eksik LLM", `Seçilen ${llamaType} LLM bulunamadı. İndirilsin mi?`, [
                 { text: "İptal", style: "cancel" },
-                { text: "İndir", onPress: () => downloadLlamaModel(llamaPath, llamaType) }
+                { text: "İndir", onPress: () => downloadModel(llamaPath, LLM_REGISTRY[llamaType].url, `${llamaType} LLM`) }
             ]);
             return;
         }
 
-        // STT (Whisper) modelleri artık assets klasöründen geldiği için dosya kontrolüne gerek yok
+        if (whisperType === 'large') {
+            const whisperPath = `${RNFS.DocumentDirectoryPath}/${WHISPER_LARGE_FILENAME}`;
+            const whisperExists = await RNFS.exists(whisperPath);
+            
+            if (!whisperExists) {
+                Alert.alert("Eksik STT", `Seçilen Large Whisper modeli bulunamadı. İndirilsin mi?`, [
+                    { text: "İptal", style: "cancel" },
+                    { text: "İndir", onPress: () => downloadModel(whisperPath, WHISPER_LARGE_URL, 'Large Whisper') }
+                ]);
+                return;
+            }
+        }
+
         orchestrator.setPreferences(llamaPath, whisperType);
         setSettingsVisible(false);
     };
@@ -163,7 +178,12 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             const llamaPath = await getLlamaPath(llamaType);
             const llamaExists = await RNFS.exists(llamaPath);
             
-            if (!llamaExists) {
+            let whisperExists = true;
+            if (whisperType === 'large') {
+                whisperExists = await RNFS.exists(`${RNFS.DocumentDirectoryPath}/${WHISPER_LARGE_FILENAME}`);
+            }
+            
+            if (!llamaExists || !whisperExists) {
                 setSettingsVisible(true);
                 return;
             }
@@ -198,9 +218,9 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
                     <GlassCard style={styles.settingsPanel}>
                         <Text style={styles.panelTitle}>Sistem Yapılandırması</Text>
                         
-                        <Text style={styles.label}>STT Motoru (Yerel Gömülü)</Text>
+                        <Text style={styles.label}>STT Motoru (Yerel Gömülü / İndirilebilir)</Text>
                         <View style={styles.row}>
-                            {(['tiny', 'small'] as WhisperModelType[]).map(t => (
+                            {(['tiny', 'small', 'large'] as WhisperModelType[]).map(t => (
                                 <TouchableOpacity key={t} onPress={() => !isDownloading && setWhisperType(t)} style={[styles.chip, whisperType === t && styles.activeChip]}>
                                     <Text style={[styles.chipText, whisperType === t && styles.activeChipText]}>Whisper {t.charAt(0).toUpperCase() + t.slice(1)}</Text>
                                 </TouchableOpacity>
@@ -218,7 +238,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
 
                         {isDownloading ? (
                             <View style={styles.progressContainer}>
-                                <Text style={styles.progressText}>LLM İndiriliyor... {downloadProgress}%</Text>
+                                <Text style={styles.progressText}>Model İndiriliyor... {downloadProgress}%</Text>
                                 <View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${downloadProgress}%` }]} /></View>
                             </View>
                         ) : (
