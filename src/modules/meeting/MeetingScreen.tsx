@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RNFS from 'react-native-fs';
+import BackgroundService from 'react-native-background-actions';
+import notifee from '@notifee/react-native';
 import { Theme } from '../../core/theme/Theme';
 import { GlassCard } from '../../components/GlassCard';
 import { orchestrator } from './BufferOrchestrator';
@@ -101,30 +103,55 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         return docPath;
     };
 
-    const downloadModel = (path: string, url: string, modelName: string) => {
+    const sendNotification = async (title: string, body: string) => {
+        await notifee.requestPermission();
+        const channelId = await notifee.createChannel({ id: 'default', name: 'Sistem Bildirimleri' });
+        await notifee.displayNotification({ title, body, android: { channelId } });
+    };
+
+    const downloadModel = async (path: string, url: string, modelName: string) => {
+        Alert.alert("Bilgi", "İndirme işlemi arka planda devam edecektir. İşlem bitince bildirim göndereceğiz.");
         setIsDownloading(true);
-        const options: RNFS.DownloadFileOptions = {
-            fromUrl: url,
-            toFile: path,
-            background: true,
-            progress: (res) => {
-                setDownloadProgress(Math.round((res.bytesWritten / res.contentLength) * 100));
-            },
+
+        const downloadTask = async () => {
+            return new Promise<void>((resolve) => {
+                const options: RNFS.DownloadFileOptions = {
+                    fromUrl: url,
+                    toFile: path,
+                    background: true,
+                    progress: (res) => {
+                        const progress = Math.round((res.bytesWritten / res.contentLength) * 100);
+                        setDownloadProgress(progress);
+                        BackgroundService.updateNotification({ taskDesc: `%${progress} tamamlandı...` });
+                    },
+                };
+
+                RNFS.downloadFile(options).promise.then(async (result) => {
+                    if (result.statusCode === 200 && result.bytesWritten > 1000000) {
+                        await sendNotification("İndirme Tamamlandı", `${modelName} modeli başarıyla yüklendi.`);
+                    } else {
+                        if (await RNFS.exists(path)) await RNFS.unlink(path);
+                        await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
+                    }
+                }).catch(async () => {
+                    if (await RNFS.exists(path)) await RNFS.unlink(path); 
+                    await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
+                }).finally(async () => {
+                    setIsDownloading(false);
+                    setDownloadProgress(0);
+                    await BackgroundService.stop();
+                    resolve();
+                });
+            });
         };
 
-        RNFS.downloadFile(options).promise.then(async (result) => {
-            if (result.statusCode === 200 && result.bytesWritten > 1000000) {
-                Alert.alert("Başarılı", `${modelName} modeli yüklendi.`);
-            } else {
-                if (await RNFS.exists(path)) await RNFS.unlink(path);
-                throw new Error("Download rejected or file too small.");
-            }
-        }).catch(async () => {
-            Alert.alert("İndirme Hatası", `${modelName} indirilemedi.`);
-            if (await RNFS.exists(path)) await RNFS.unlink(path); 
-        }).finally(() => {
-            setIsDownloading(false);
-            setDownloadProgress(0);
+        await BackgroundService.start(downloadTask, {
+            taskName: 'ModelDownload',
+            taskTitle: `${modelName} İndiriliyor`,
+            taskDesc: 'İndirme başlatılıyor...',
+            taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+            color: '#6366f1',
+            parameters: { delay: 1000 }
         });
     };
 
@@ -160,6 +187,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     const handleToggleRecording = async () => {
         if (isRecording) {
             // STOP RECORDING & START BATCH PROCESSING
+            Alert.alert("Bilgi", "Ses analizi arka planda devam edecektir. İşlem bitince bildirim göndereceğiz.");
             setIsRecording(false);
             setIsProcessing(true);
             setFinalSummary(null); // Clear previous summary
