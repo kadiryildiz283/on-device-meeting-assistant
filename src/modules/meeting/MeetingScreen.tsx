@@ -26,8 +26,8 @@ const LLM_REGISTRY: Record<LLMType, { filename: string; url: string; size: strin
     '7B': { filename: 'qwen2.5-7b-instruct-q4_k_m.gguf', url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf?download=true', size: '4.7 GB' }
 };
 
-const WHISPER_LARGE_FILENAME = 'ggml-large-v2-q8_0.bin';
-const WHISPER_LARGE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2-q8_0.bin?download=true';
+const WHISPER_LARGE_FILENAME = 'ggml-large-v3-q5_0.bin';
+const WHISPER_LARGE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin?download=true';
 
 export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     // Core States
@@ -112,11 +112,12 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             },
         };
 
-        RNFS.downloadFile(options).promise.then((result) => {
-            if (result.statusCode === 200) {
+        RNFS.downloadFile(options).promise.then(async (result) => {
+            if (result.statusCode === 200 && result.bytesWritten > 1000000) {
                 Alert.alert("Başarılı", `${modelName} modeli yüklendi.`);
             } else {
-                throw new Error("Download rejected.");
+                if (await RNFS.exists(path)) await RNFS.unlink(path);
+                throw new Error("Download rejected or file too small.");
             }
         }).catch(async () => {
             Alert.alert("İndirme Hatası", `${modelName} indirilemedi.`);

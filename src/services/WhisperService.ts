@@ -15,7 +15,7 @@ export class WhisperService {
             
             let modelAsset;
             if (modelType === 'large') {
-                modelAsset = `${RNFS.DocumentDirectoryPath}/ggml-large-v2-q8_0.bin`;
+                modelAsset = `${RNFS.DocumentDirectoryPath}/ggml-large-v3-q5_0.bin`;
             } else {
                 modelAsset = modelType === 'tiny' ? require('../assets/models/ggml-tiny.bin') : require('../assets/models/ggml-small.bin');
             }
