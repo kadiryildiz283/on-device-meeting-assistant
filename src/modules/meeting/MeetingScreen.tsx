@@ -116,60 +116,81 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         await notifee.displayNotification({ title, body, android: { channelId } });
     };
 
-    const downloadModel = async (path: string, url: string, modelName: string) => {
-        Alert.alert("Bilgi", "İndirme işlemi arka planda devam edecektir. İşlem bitince bildirim göndereceğiz.");
-        setIsDownloading(true);
+   const downloadModel = async (path: string, url: string, modelName: string) => {
+    Alert.alert("Bilgi", "İndirme işlemi arka planda devam edecektir. İşlem bitince bildirim göndereceğiz.");
+    
+    // UI Initial State Reset
+    setIsDownloading(true);
+    setDownloadProgress(0); 
 
-        if (BackgroundService.isRunning()) {
+    // Prevent overlapping background tasks
+    if (BackgroundService.isRunning()) {
+        await BackgroundService.stop();
+    }
+
+    const downloadTask = async () => {
+        try {
+            const options: RNFS.DownloadFileOptions = {
+                fromUrl: url,
+                toFile: path,
+                // UI thread safety: 2 seconds interval is optimal
+                progressInterval: 2000, 
+                progressDivider: 5,
+                progress: (res) => {
+                    // Rational check: Prevent NaN errors if contentLength is missing due to 302 Redirects
+                    if (res.contentLength > 0) {
+                        const progress = Math.round((res.bytesWritten / res.contentLength) * 100);
+                        
+                        // 1. MANDATORY: Update React UI State
+                        setDownloadProgress(progress);
+                        
+                        // 2. OPTIONAL: Update OS Notification
+                        BackgroundService.updateNotification({ taskDesc: `%${progress} indirildi...` }).catch(() => {});
+                    }
+                },
+            };
+
+            const result = await RNFS.downloadFile(options).promise;
+            
+            if (result.statusCode === 200) {
+                console.log(`[MeetingScreen] Download success: ${modelName}`);
+                await sendNotification("İndirme Tamamlandı", `${modelName} başarıyla yüklendi.`);
+            } else {
+                throw new Error(`Download failed with status HTTP ${result.statusCode}`);
+            }
+        } catch (error) {
+            console.error(`[MeetingScreen] Download error for ${modelName}:`, error);
+            
+            // Garbage Collection: Purge incomplete or corrupted files
+            const exists = await RNFS.exists(path);
+            if (exists) {
+                await RNFS.unlink(path);
+                console.log(`[MeetingScreen] Corrupted file purged: ${path}`);
+            }
+            await sendNotification("İndirme Hatası", `${modelName} indirilemedi. Ağ bağlantınızı kontrol edin.`);
+        } finally {
+            // Restore UI and stop background consumption regardless of success/failure
+            setIsDownloading(false);
+            setDownloadProgress(0);
             await BackgroundService.stop();
         }
-
-        const downloadTask = async () => {
-            try {
-                const options: RNFS.DownloadFileOptions = {
-                    fromUrl: url,
-                    toFile: path,
-                    progressInterval: 2000,
-                    progressDivider: 5,
-                    progress: (res) => {
-                        const progress = Math.round((res.bytesWritten / res.contentLength) * 100);
-                        // UI thread'i yormamak için sadece arka plan bildirimini güncelle
-                        BackgroundService.updateNotification({ taskDesc: `%${progress} indirildi...` }).catch(() => {});
-                    },
-                };
-
-                const result = await RNFS.downloadFile(options).promise;
-                
-                if (result.statusCode === 200) {
-                    await sendNotification("İndirme Tamamlandı", `${modelName} başarıyla yüklendi.`);
-                } else {
-                    throw new Error("Download failed");
-                }
-            } catch (error) {
-                if (await RNFS.exists(path)) await RNFS.unlink(path);
-                await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
-            } finally {
-                setIsDownloading(false);
-                setDownloadProgress(0);
-                await BackgroundService.stop();
-            }
-        };
-
-        try {
-            await BackgroundService.start(downloadTask, {
-                taskName: 'ModelDownload',
-                taskTitle: `${modelName} İndiriliyor`,
-                taskDesc: 'İndirme başlatılıyor...',
-                taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-                color: '#6366f1',
-                parameters: { delay: 1000 }
-            });
-        } catch (e) {
-            console.error("Background service start error:", e);
-            setIsDownloading(false);
-            Alert.alert("Hata", "Arka plan servisi başlatılamadı.");
-        }
     };
+
+    try {
+        await BackgroundService.start(downloadTask, {
+            taskName: 'ModelDownload',
+            taskTitle: `${modelName} İndiriliyor`,
+            taskDesc: 'İndirme başlatılıyor...',
+            taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+            color: '#6366f1',
+            parameters: { delay: 1000 }
+        });
+    } catch (e) {
+        console.error("[MeetingScreen] Background service trigger failed:", e);
+        setIsDownloading(false);
+        Alert.alert("Hata", "Arka plan servisi başlatılamadı. İşletim sistemi izinlerini kontrol edin.");
+    }
+};
 
     const handleApplySettings = async () => {
         const llamaPath = await getLlamaPath(llamaType);

@@ -1,3 +1,6 @@
+// Klasör yapına göre ../../ veya ../ kullanarak doğru yolu bul.
+import { sendSystemNotification } from '../utils/NotificationUtils';
+import { requestEssentialPermissions } from '../../services/Permission';
 import { audioService } from '../../services/AudioService';
 import { whisperService, WhisperModelType } from '../../services/WhisperService';
 import { llamaService } from '../../services/LlamaService';
@@ -23,6 +26,28 @@ export class BufferOrchestrator {
             console.log(`[Orchestrator] Yeni toplantı DB'ye işlendi: ${this.activeMeeting.id}`);
             
             // Phase 1: Pure Audio Recording (No AI loaded yet)
+            await audioService.startRecording();
+            this.notifyStatus('recording');
+        } catch (e) {
+            console.error("[Orchestrator] Start error:", e);
+        }
+    }
+public async startMeeting(): Promise<void> {
+        try {
+            // 1. VETO CHECK: Request permissions before accessing hardware
+            const hasPermissions = await requestEssentialPermissions();
+            if (!hasPermissions) {
+                console.warn("[Orchestrator] HARD STOP: Critical hardware permissions denied.");
+                this.notifyStatus('idle');
+                return; // Abort operation completely
+            }
+
+            // 2. Safe to proceed
+            const title = `Toplantı - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
+            this.activeMeeting = await MeetingController.createMeeting(title); 
+            console.log(`[Orchestrator] New meeting registered to DB: ${this.activeMeeting.id}`);
+            
+            // Phase 1: Pure Audio Recording (Permissions are guaranteed at this point)
             await audioService.startRecording();
             this.notifyStatus('recording');
         } catch (e) {
@@ -88,6 +113,10 @@ export class BufferOrchestrator {
                         body: 'Toplantı özetiniz hazır.',
                         android: { channelId },
                     });
+                    await sendSystemNotification(
+                        'Analiz Tamamlandı', 
+                        'Toplantı özetiniz hazır. Okumak için dokunun.'
+                    );
 
                     await BackgroundService.stop();
                     resolve(summary);
