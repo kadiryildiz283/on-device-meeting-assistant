@@ -79,11 +79,18 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
     const requestPermissions = async () => {
         if (Platform.OS === 'android') {
             try {
-                const grants = await PermissionsAndroid.requestMultiple([
+                const permissions = [
                     PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
                     PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
                     PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-                ]);
+                ];
+
+                // Android 13+ için bildirim izni
+                if (Platform.Version >= 33) {
+                    permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+                }
+
+                const grants = await PermissionsAndroid.requestMultiple(permissions);
                 return grants['android.permission.RECORD_AUDIO'] === PermissionsAndroid.RESULTS.GRANTED;
             } catch (err) {
                 console.warn(err);
@@ -113,7 +120,11 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
         Alert.alert("Bilgi", "İndirme işlemi arka planda devam edecektir. İşlem bitince bildirim göndereceğiz.");
         setIsDownloading(true);
 
-        const downloadTask = async () => {
+        if (BackgroundService.isRunning()) {
+            await BackgroundService.stop();
+        }
+
+        const downloadTask = async (taskDataArguments?: any) => {
             return new Promise<void>((resolve) => {
                 const options: RNFS.DownloadFileOptions = {
                     fromUrl: url,

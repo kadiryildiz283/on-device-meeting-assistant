@@ -32,7 +32,12 @@ export class BufferOrchestrator {
 
     public async stopMeetingAndProcess(): Promise<string> {
         return new Promise(async (resolve) => {
-            const processingTask = async () => {
+            // Eğer halihazırda çalışan bir arka plan servisi varsa durdur
+            if (BackgroundService.isRunning()) {
+                await BackgroundService.stop();
+            }
+
+            const processingTask = async (taskDataArguments?: any) => {
                 try {
                     this.notifyStatus('processing_audio');
                     await BackgroundService.updateNotification({ taskDesc: 'Ses dosyası işleniyor...' });
