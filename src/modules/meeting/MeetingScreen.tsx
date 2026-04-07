@@ -124,36 +124,35 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             await BackgroundService.stop();
         }
 
-        const downloadTask = async (taskDataArguments?: any) => {
-            return new Promise<void>((resolve) => {
+        const downloadTask = async () => {
+            try {
                 const options: RNFS.DownloadFileOptions = {
                     fromUrl: url,
                     toFile: path,
-                    progressInterval: 1000, // ÇÖKME ÇÖZÜMÜ: Saniyede sadece 1 kez tetikle
+                    progressInterval: 2000,
+                    progressDivider: 5,
                     progress: (res) => {
                         const progress = Math.round((res.bytesWritten / res.contentLength) * 100);
-                        setDownloadProgress(progress);
-                        BackgroundService.updateNotification({ taskDesc: `%${progress} tamamlandı...` });
+                        // UI thread'i yormamak için sadece arka plan bildirimini güncelle
+                        BackgroundService.updateNotification({ taskDesc: `%${progress} indirildi...` }).catch(() => {});
                     },
                 };
 
-                RNFS.downloadFile(options).promise.then(async (result) => {
-                    if (result.statusCode === 200 && result.bytesWritten > 1000000) {
-                        await sendNotification("İndirme Tamamlandı", `${modelName} modeli başarıyla yüklendi.`);
-                    } else {
-                        if (await RNFS.exists(path)) await RNFS.unlink(path);
-                        await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
-                    }
-                }).catch(async () => {
-                    if (await RNFS.exists(path)) await RNFS.unlink(path); 
-                    await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
-                }).finally(async () => {
-                    setIsDownloading(false);
-                    setDownloadProgress(0);
-                    await BackgroundService.stop();
-                    resolve();
-                });
-            });
+                const result = await RNFS.downloadFile(options).promise;
+                
+                if (result.statusCode === 200) {
+                    await sendNotification("İndirme Tamamlandı", `${modelName} başarıyla yüklendi.`);
+                } else {
+                    throw new Error("Download failed");
+                }
+            } catch (error) {
+                if (await RNFS.exists(path)) await RNFS.unlink(path);
+                await sendNotification("İndirme Hatası", `${modelName} indirilemedi.`);
+            } finally {
+                setIsDownloading(false);
+                setDownloadProgress(0);
+                await BackgroundService.stop();
+            }
         };
 
         try {

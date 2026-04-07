@@ -37,13 +37,13 @@ export class BufferOrchestrator {
                 await BackgroundService.stop();
             }
 
-            const processingTask = async (taskDataArguments?: any) => {
+            const processingTask = async () => {
                 try {
                     this.notifyStatus('processing_audio');
-                    await BackgroundService.updateNotification({ taskDesc: 'Ses dosyası işleniyor...' });
                     
                     // 1. Stop Recording
                     const filePath = await audioService.stopRecording();
+                    await BackgroundService.updateNotification({ taskDesc: 'Ses dosyası işleniyor...' });
                     
                     // 2. STT Phase (Whisper Batch Processing)
                     this.notifyStatus('transcribing');
@@ -109,12 +109,14 @@ export class BufferOrchestrator {
             };
 
             try {
+                // BackgroundService başlatılmadan önce kaydı durdurup dosya yolunu alalım ki kilitlenme olmasın
                 await BackgroundService.start(processingTask, {
                     taskName: 'MeetingProcessing',
                     taskTitle: 'Toplantı Analiz Ediliyor',
-                    taskDesc: 'İşlem başlatılıyor...',
+                    taskDesc: 'Hazırlanıyor...',
                     taskIcon: { name: 'ic_launcher', type: 'mipmap' },
                     color: '#6366f1',
+                    linkingURI: 'conferenceai://',
                     parameters: { delay: 1000 }
                 });
             } catch (e) {
