@@ -129,7 +129,7 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
                 const options: RNFS.DownloadFileOptions = {
                     fromUrl: url,
                     toFile: path,
-                    background: true,
+                    progressInterval: 1000, // ÇÖKME ÇÖZÜMÜ: Saniyede sadece 1 kez tetikle
                     progress: (res) => {
                         const progress = Math.round((res.bytesWritten / res.contentLength) * 100);
                         setDownloadProgress(progress);
@@ -156,14 +156,20 @@ export const MeetingScreen = ({ onOpenMenu }: { onOpenMenu: () => void }) => {
             });
         };
 
-        await BackgroundService.start(downloadTask, {
-            taskName: 'ModelDownload',
-            taskTitle: `${modelName} İndiriliyor`,
-            taskDesc: 'İndirme başlatılıyor...',
-            taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-            color: '#6366f1',
-            parameters: { delay: 1000 }
-        });
+        try {
+            await BackgroundService.start(downloadTask, {
+                taskName: 'ModelDownload',
+                taskTitle: `${modelName} İndiriliyor`,
+                taskDesc: 'İndirme başlatılıyor...',
+                taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+                color: '#6366f1',
+                parameters: { delay: 1000 }
+            });
+        } catch (e) {
+            console.error("Background service start error:", e);
+            setIsDownloading(false);
+            Alert.alert("Hata", "Arka plan servisi başlatılamadı.");
+        }
     };
 
     const handleApplySettings = async () => {

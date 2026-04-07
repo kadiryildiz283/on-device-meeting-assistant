@@ -108,14 +108,19 @@ export class BufferOrchestrator {
                 }
             };
 
-            await BackgroundService.start(processingTask, {
-                taskName: 'MeetingProcessing',
-                taskTitle: 'Toplantı Analiz Ediliyor',
-                taskDesc: 'İşlem başlatılıyor...',
-                taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-                color: '#6366f1',
-                parameters: { delay: 1000 }
-            });
+            try {
+                await BackgroundService.start(processingTask, {
+                    taskName: 'MeetingProcessing',
+                    taskTitle: 'Toplantı Analiz Ediliyor',
+                    taskDesc: 'İşlem başlatılıyor...',
+                    taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+                    color: '#6366f1',
+                    parameters: { delay: 1000 }
+                });
+            } catch (e) {
+                console.error("Background service start error:", e);
+                resolve("Arka plan servisi başlatılamadı.");
+            }
         });
     }
 
