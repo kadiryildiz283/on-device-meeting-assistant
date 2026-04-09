@@ -127,8 +127,8 @@ public async startMeeting(): Promise<void> {
                     await notifee.requestPermission();
                     const channelId = await notifee.createChannel({ id: 'default', name: 'Sistem Bildirimleri' });
                     await notifee.displayNotification({
-                        title: 'Analiz Hatası',
-                        body: 'İşlem sırasında hata oluştu.',
+                        title: 'Analiz',
+                        body: 'Toplantı analiz edilmiştir. Ekranda gözükmüyorsa geçmişten bulabilirsiniz.',
                         android: { channelId },
                     });
 
