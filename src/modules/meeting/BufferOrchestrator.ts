@@ -21,19 +21,6 @@ export class BufferOrchestrator {
 
     public async startMeeting(): Promise<void> {
         try {
-            const title = `Toplantı - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
-            this.activeMeeting = await MeetingController.createMeeting(title); 
-            console.log(`[Orchestrator] Yeni toplantı DB'ye işlendi: ${this.activeMeeting.id}`);
-            
-            // Phase 1: Pure Audio Recording (No AI loaded yet)
-            await audioService.startRecording();
-            this.notifyStatus('recording');
-        } catch (e) {
-            console.error("[Orchestrator] Start error:", e);
-        }
-    }
-public async startMeeting(): Promise<void> {
-        try {
             // 1. VETO CHECK: Request permissions before accessing hardware
             const hasPermissions = await requestEssentialPermissions();
             if (!hasPermissions) {
@@ -80,29 +67,27 @@ public async startMeeting(): Promise<void> {
                     // Clean up heavy audio file
                     await audioService.deleteRecord();
 
-                    if (this.activeMeeting) {
+                    if (this.activeMeeting && fullTranscript.trim()) {
                         await MeetingController.addTranscript(this.activeMeeting, fullTranscript);
                     }
 
-                    if (!this.llamaModelPath) {
-                        await BackgroundService.stop();
-                        resolve("Analiz yapılamadı: LLM bulunamadı.");
-                        return;
+                    let finalSummary = "Özet çıkarılamadı (Konuşma tespit edilemedi).";
+
+                    if (this.llamaModelPath && fullTranscript.trim().length > 10) {
+                        // 3. LLM Phase
+                        this.notifyStatus('summarizing');
+                        await BackgroundService.updateNotification({ taskDesc: 'Yapay zeka analiz ediyor (LLM)...' });
+                        await llamaService.initialize(this.llamaModelPath);
+                        finalSummary = await llamaService.summarize(fullTranscript);
+                        await llamaService.release(); // DESTROY LLM
+                        
+                        // 4. Update DB
+                        if (this.activeMeeting) {
+                            await MeetingController.updateSummary(this.activeMeeting, finalSummary); 
+                        }
                     }
                     
-                    // 3. LLM Phase
-                    this.notifyStatus('summarizing');
-                    await BackgroundService.updateNotification({ taskDesc: 'Yapay zeka analiz ediyor (LLM)...' });
-                    await llamaService.initialize(this.llamaModelPath);
-                    const summary = await llamaService.summarize(fullTranscript);
-                    await llamaService.release(); // DESTROY LLM
-                    
-                    // 4. Update DB
-                    if (this.activeMeeting) {
-                        await MeetingController.updateSummary(this.activeMeeting, summary); 
-                        this.activeMeeting = null;
-                    }
-                    
+                    this.activeMeeting = null;
                     this.notifyStatus('idle');
                     
                     // Bildirim Gönder
@@ -113,13 +98,9 @@ public async startMeeting(): Promise<void> {
                         body: 'Toplantı özetiniz hazır.',
                         android: { channelId },
                     });
-                    await sendSystemNotification(
-                        'Analiz Tamamlandı', 
-                        'Toplantı özetiniz hazır. Okumak için dokunun.'
-                    );
 
                     await BackgroundService.stop();
-                    resolve(summary);
+                    resolve(finalSummary);
                 } catch (error) {
                     console.error("[Orchestrator] Pipeline error:", error);
                     this.notifyStatus('idle');

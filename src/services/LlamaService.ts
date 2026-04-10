@@ -54,9 +54,12 @@ export class LlamaService {
         await this.llamaContext.completion({
             prompt,
             n_predict: maxTokens,
-            // Modeli halüsinasyondan uzak tutup sadece gerçeğe odaklamak için temperature'ı sıfıra yaklaştırıyoruz.
-            temperature: 0.1, 
-            stop: ["<|im_end|>", "<|im_start|>"],
+            // Modeli halüsinasyondan uzak tutup sadece gerçeğe odaklamak için parametreler
+            temperature: 0.1,
+            repeat_penalty: 1.2,
+            presence_penalty: 0.1,
+            frequency_penalty: 0.1,
+            stop: ["<|im_end|>", "<|im_start|>", "Not:"],
         }, (res) => { 
             result += res.token; 
         });
