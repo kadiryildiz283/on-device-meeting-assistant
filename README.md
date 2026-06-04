@@ -1,19 +1,25 @@
-# 🎙️ ConferenceAi: On-Device AI Meeting Assistant
+# 🎙️ ConferenceAi: Sunucu Tabanlı Toplantı Asistanı
 
-Gizlilik odaklı, %100 çevrimdışı çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
+Gizlilik odaklı, sunucu destekli yapay zeka ile çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
 
 ## 🌟 Temel Özellikler
-- **Stabil STT (Batch Processing):** `whisper.rn` (ggml-small/tiny) kullanılarak yüksek doğrulukta, C++ çökmelerine (Segmentation Fault) karşı korumalı ses-metin dökümü.
-- **On-Device LLM:** `llama.rn` (Qwen 2.5) ile toplantı sonunda otomatik akıllı özetleme yapar.
+- **Sunucu STT (whisper.cpp):** 172.16.10.141 sunucusunda çalışan Whisper motoru ile yüksek doğrulukta ses-metin dökümü.
+- **Sunucu LLM (Ollama):** 172.16.10.141:11434 sunucusunda çalışan Qwen 2.5 modeli ile toplantı sonunda otomatik akıllı özetleme.
 - **Yerel Veri Saklama:** `@nozbe/watermelondb` (SQLite) ile tüm veriler cihazda kalır, buluta çıkmaz.
-- **Dinamik Kaynak Yönetimi:** RAM darboğazını önlemek için Kayıt, Whisper ve Llama motorları kesin bir sırayla (sequential) çalıştırılır ve işi biten motor RAM'den tamamen silinir.
+- **Akıllı Senkronizasyon:** Sunucuya ulaşılamazsa ses kaydı saklanır ve her dakika otomatik senkronizasyon denenir.
+- **Arka Plan İşleme:** Uygulama kapalıyken bile senkronizasyon devam eder.
 
-## 🛠 Teknik Mimari (Record First, Transcribe Later)
-Uygulama, mobil cihazlardaki donanım limitlerini aşmamak için doğrusal bir boru hattı (pipeline) kullanır:
+## 🛠 Teknik Mimari (Kaydet -> Senkronize Et)
+
+Uygulama, cihazdonanımını yormamak için tüm AI işlemlerini sunucuya devreder:
+
 1. **Kayıt Aşaması:** `react-native-audio-record` ile ses 16kHz WAV formatında diske yazılır. AI motorları bu sırada tamamen kapalıdır.
-2. **STT Aşaması:** Toplantı durdurulduğunda kaydedilen dosya `whisper.rn` motoruna toplu (batch) olarak verilir ve metin çözülür. Ardından Whisper RAM'den silinir.
-3. **Özetleme Aşaması:** `llama.rn` motoru başlatılır, elde edilen tam metin özetlenir ve motor RAM'den silinir.
-4. **Kalıcılık:** Nihai özet ve transkripsiyon anlık olarak WatermelonDB'ye kaydedilir.
+2. **Bekleme Aşaması:** Kayıt durdurulduğunda dosya yolu ve "pending" durumu veritabanına kaydedilir.
+3. **Senkronizasyon Aşaması:**
+   - Eğer sunucuya ulaşılabiliyorsa → STT → LLM işlemleri sırayla yapılır.
+   - Eğer ulaşılamıyorsa → Dosya saklanır, her dakika sunucu kontrol edilir.
+   - Başarısız olursa → Dosya ASLA silinmez, "failed" durumuyla işaretlenir.
+4. **Tamamlama:** Özet ve transkripsiyon veritabanına kaydedilir, kullanıcıya bildirim gönderilir.
 
 ---
 
@@ -22,47 +28,88 @@ Uygulama, mobil cihazlardaki donanım limitlerini aşmamak için doğrusal bir b
 ### Gereksinimler
 - **Node.js:** v22.x
 - **Android:** SDK 34+ / **iOS:** Xcode 15+
-- **Donanım:** En az 8GB RAM'li fiziksel cihaz (Yüksek GPU gücü önerilir).
+- **Donanım:** En az 6GB RAM'li fiziksel cihaz.
+
+### Sunucu Gereksinimleri
+- **STT Sunucusu:** 172.16.10.141 (whisper.cpp server, port 8080)
+- **LLM Sunucusu:** 172.16.10.141:11434 (Ollama)
 
 ### 1. Bağımlılıkların Kurulumu
-Projede stabiliteyi bozduğu için `react-native-sherpa-onnx` ve türevi paketler terk edilmiştir. Temiz bir kurulum için:
 ```bash
 npm install
 cd android && ./gradlew clean && cd ..
+```
 
-2. AI Modellerinin Eklenmesi (KRİTİK ADIM)
+### 2. Sunucu Yapılandırması
 
-C++ motorlarının çökmemesi için aşağıdaki STT ve LLM dosyalarını sisteme manuel veya UI üzerinden doğru şekilde tanıtmanız zorunludur.
-A. Whisper Modelleri (STT)
+#### A. Whisper.cpp STT Sunucusu (172.16.10.141)
 
-Whisper modelleri indirme hatalarını önlemek için uygulamaya statik (bundled) olarak gömülmüştür. Bu dosyaları manuel indirip projeye dahil etmelisiniz:
+whisper.cpp server'ı başlatmak için:
+```bash
+# Modeli indir (örnek: tiny)
+./models/download-ggml-model.sh tiny
 
-    Hugging Face - ggerganov/whisper.cpp deposuna gidin.
+# Server'ı başlat
+./server -m models/ggml-tiny.bin -t 4 --port 8080
+```
 
-    ggml-tiny.bin ve ggml-small.bin dosyalarını indirin.
+#### B. Ollama LLM Sunucusu (172.16.10.141:11434)
 
-    Projenizde aşağıdaki dizini oluşturun (eğer yoksa) ve dosyaları içine kopyalayın:
+```bash
+# Ollama'yı başlat
+ollama serve
 
-        src/assets/models/ggml-tiny.bin
+# Qwen 2.5 modelini indir (veya daha küçük bir model)
+ollama pull qwen2.5:latest
+# veya daha hafif bir model için:
+# ollama pull qwen2.5:1.5b
+```
 
-        src/assets/models/ggml-small.bin
+### 3. Uygulama Yapılandırması
 
-B. Llama Modeli (LLM)
+Sunucu adreslerini değiştirmek için `src/services/SyncService.ts` dosyasını düzenleyin:
 
-Uygulama, temel analizler için qwen2.5-7b-instruct-q4_k_m.gguf (veya daha küçük 1.5B/3B) varyantlarını destekler.
+```typescript
+const STT_SERVER = 'http://172.16.10.141:8080/inference';
+const LLM_SERVER = 'http://172.16.10.141:11434/api/generate';
+```
 
-    Otomatik Kurulum: Uygulama içindeki ayarlar menüsünden (Settings UI) istediğiniz modeli doğrudan cihazın belge dizinine indirebilirsiniz.
+### 4. Çalıştırma
 
-    Manuel Kurulum (Zaman Kazanmak İçin): İlgili GGUF dosyasını indirip Android cihazınızın root belgeler dizinine (veya Android/data/com.conferenceai/files/) qwen2.5-7b-instruct-q4_k_m.gguf ismiyle atabilirsiniz.
-
-3. Çalıştırma
-
-Statik .bin (Whisper) dosyalarını assets klasörüne eklediğiniz için Metro Bundler'ın önbelleğini temizleyerek başlamanız şarttır:
-Bash
-
+```bash
 npm start -- --reset-cache
 
-Farklı bir terminalde Android derlemesini başlatın:
-Bash
-
+# Farklı terminalde Android derlemesi
 npx react-native run-android
+```
+
+---
+
+## 📊 Veritabanı Şeması
+
+| Alan | Tür | Açıklama |
+|------|-----|----------|
+| id | string | Benzersiz tanımlayıcı |
+| title | string | Toplantı başlığı |
+| summary | string | LLM tarafından oluşturulan özet (isteğe bağlı) |
+| audio_file_path | string | Yerel ses dosyası yolu (isteğe bağlı) |
+| status | string | İşlem durumu: pending, processing, completed, failed |
+| created_at | number | Oluşturulma zamanı |
+
+## 🔄 Senkronizasyon Durumları
+
+| Durum | Açıklama |
+|-------|----------|
+| pending | Sunucuya yüklendi, işlem bekliyor |
+| processing | Sunucuda işleniyor |
+| completed | STT ve LLM tamamlandı |
+| failed | İşlem başarısız, tekrar denenecek |
+
+## 🗑️ Eski Mimari (On-Device)
+
+Eski on-device AI mimarisi artık kullanılmıyor. Aşağıdaki dosyalar ve bağımlılıklar kaldırılmıştır:
+- `whisper.rn` (yerel Whisper)
+- `llama.rn` (yerel Llama)
+- `react-native-sherpa-onnx`
+
+Yerel model indirme gereksinimi ortadan kalkmıştır.
