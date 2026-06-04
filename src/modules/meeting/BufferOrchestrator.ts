@@ -1,40 +1,25 @@
-// Klasör yapına göre ../../ veya ../ kullanarak doğru yolu bul.
-import { sendSystemNotification } from '../utils/NotificationUtils';
 import { requestEssentialPermissions } from '../../services/Permission';
 import { audioService } from '../../services/AudioService';
-import { whisperService, WhisperModelType } from '../../services/WhisperService';
-import { llamaService } from '../../services/LlamaService';
+import { SyncService } from '../../services/SyncService';
 import { MeetingController } from '../../database/MeetingController'; 
 import { MeetingModel } from '../../database/MeetingModel';
-import BackgroundService from 'react-native-background-actions';
-import notifee from '@notifee/react-native';
 
 export class BufferOrchestrator {
-    private llamaModelPath: string = '';
-    private whisperPref: WhisperModelType = 'small';
     private activeMeeting: MeetingModel | null = null;
-
-    public setPreferences(llamaPath: string, whisperMode: WhisperModelType) {
-        this.llamaModelPath = llamaPath;
-        this.whisperPref = whisperMode;
-    }
 
     public async startMeeting(): Promise<void> {
         try {
-            // 1. VETO CHECK: Request permissions before accessing hardware
             const hasPermissions = await requestEssentialPermissions();
             if (!hasPermissions) {
                 console.warn("[Orchestrator] HARD STOP: Critical hardware permissions denied.");
                 this.notifyStatus('idle');
-                return; // Abort operation completely
+                return;
             }
 
-            // 2. Safe to proceed
             const title = `Toplantı - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
             this.activeMeeting = await MeetingController.createMeeting(title); 
             console.log(`[Orchestrator] New meeting registered to DB: ${this.activeMeeting.id}`);
             
-            // Phase 1: Pure Audio Recording (Permissions are guaranteed at this point)
             await audioService.startRecording();
             this.notifyStatus('recording');
         } catch (e) {
@@ -43,97 +28,30 @@ export class BufferOrchestrator {
     }
 
     public async stopMeetingAndProcess(): Promise<string> {
-        return new Promise(async (resolve) => {
-            // Eğer halihazırda çalışan bir arka plan servisi varsa durdur
-            if (BackgroundService.isRunning()) {
-                await BackgroundService.stop();
+        try {
+            this.notifyStatus('processing_audio');
+            
+            // 1. Stop Recording
+            const filePath = await audioService.stopRecording();
+            
+            if (this.activeMeeting) {
+                // 2. Save file path and set status to pending
+                await MeetingController.updateAudioFilePath(this.activeMeeting, filePath);
+                await MeetingController.updateStatus(this.activeMeeting, 'pending');
+                
+                // 3. Trigger Sync Service
+                SyncService.startSync();
             }
 
-            const processingTask = async () => {
-                try {
-                    this.notifyStatus('processing_audio');
-                    
-                    // 1. Stop Recording
-                    const filePath = await audioService.stopRecording();
-                    await BackgroundService.updateNotification({ taskDesc: 'Ses dosyası işleniyor...' });
-                    
-                    // 2. STT Phase (Whisper Batch Processing)
-                    this.notifyStatus('transcribing');
-                    await BackgroundService.updateNotification({ taskDesc: 'Ses metne çevriliyor (STT)...' });
-                    await whisperService.initialize(this.whisperPref);
-                    const fullTranscript = await whisperService.transcribeFile(filePath);
-                    await whisperService.release(); // DESTROY STT
-                    
-                    // Clean up heavy audio file
-                    await audioService.deleteRecord();
-
-                    if (this.activeMeeting && fullTranscript.trim()) {
-                        await MeetingController.addTranscript(this.activeMeeting, fullTranscript);
-                    }
-
-                    let finalSummary = "Özet çıkarılamadı (Konuşma tespit edilemedi).";
-
-                    if (this.llamaModelPath && fullTranscript.trim().length > 10) {
-                        // 3. LLM Phase
-                        this.notifyStatus('summarizing');
-                        await BackgroundService.updateNotification({ taskDesc: 'Yapay zeka analiz ediyor (LLM)...' });
-                        await llamaService.initialize(this.llamaModelPath);
-                        finalSummary = await llamaService.summarize(fullTranscript);
-                        await llamaService.release(); // DESTROY LLM
-                        
-                        // 4. Update DB
-                        if (this.activeMeeting) {
-                            await MeetingController.updateSummary(this.activeMeeting, finalSummary); 
-                        }
-                    }
-                    
-                    this.activeMeeting = null;
-                    this.notifyStatus('idle');
-                    
-                    // Bildirim Gönder
-                    await notifee.requestPermission();
-                    const channelId = await notifee.createChannel({ id: 'default', name: 'Sistem Bildirimleri' });
-                    await notifee.displayNotification({
-                        title: 'Analiz Tamamlandı',
-                        body: 'Toplantı özetiniz hazır.',
-                        android: { channelId },
-                    });
-
-                    await BackgroundService.stop();
-                    resolve(finalSummary);
-                } catch (error) {
-                    console.error("[Orchestrator] Pipeline error:", error);
-                    this.notifyStatus('idle');
-                    
-                    await notifee.requestPermission();
-                    const channelId = await notifee.createChannel({ id: 'default', name: 'Sistem Bildirimleri' });
-                    await notifee.displayNotification({
-                        title: 'Analiz',
-                        body: 'Toplantı analiz edilmiştir. Ekranda gözükmüyorsa geçmişten bulabilirsiniz.',
-                        android: { channelId },
-                    });
-
-                    await BackgroundService.stop();
-                    resolve("İşlem sırasında hata oluştu.");
-                }
-            };
-
-            try {
-                // BackgroundService başlatılmadan önce kaydı durdurup dosya yolunu alalım ki kilitlenme olmasın
-                await BackgroundService.start(processingTask, {
-                    taskName: 'MeetingProcessing',
-                    taskTitle: 'Toplantı Analiz Ediliyor',
-                    taskDesc: 'Hazırlanıyor...',
-                    taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-                    color: '#6366f1',
-                    linkingURI: 'conferenceai://',
-                    parameters: { delay: 1000 }
-                });
-            } catch (e) {
-                console.error("Background service start error:", e);
-                resolve("Arka plan servisi başlatılamadı.");
-            }
-        });
+            this.activeMeeting = null;
+            this.notifyStatus('idle');
+            
+            return "Kayıt tamamlandı, sunucuya yükleniyor...";
+        } catch (error) {
+            console.error("[Orchestrator] Pipeline error:", error);
+            this.notifyStatus('idle');
+            return "İşlem sırasında hata oluştu.";
+        }
     }
 
     private notifyStatus(status: 'idle' | 'recording' | 'processing_audio' | 'transcribing' | 'summarizing') {

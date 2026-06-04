@@ -12,10 +12,36 @@ export class MeetingController {
             meeting = await database.get<MeetingModel>('meetings').create(record => {
                 record.title = title;
                 record.createdAt = new Date();
+                record.status = 'recording';
             });
         });
         console.log(`[DB] Created new meeting: ${meeting!.id}`);
         return meeting!;
+    }
+
+    static async updateStatus(meeting: MeetingModel, status: string): Promise<void> {
+        await database.write(async () => {
+            await meeting.update(record => {
+                record.status = status;
+            });
+        });
+        console.log(`[DB] Updated status to ${status} for meeting: ${meeting.id}`);
+    }
+
+    static async updateAudioFilePath(meeting: MeetingModel, path: string): Promise<void> {
+        await database.write(async () => {
+            await meeting.update(record => {
+                record.audioFilePath = path;
+            });
+        });
+        console.log(`[DB] Updated audio path for meeting: ${meeting.id}`);
+    }
+
+    static async getPendingMeetings(): Promise<MeetingModel[]> {
+        return await database.get<MeetingModel>('meetings').query().fetch();
+        // WatermelonDB'de status bazlı filtreleme yapmak için:
+        // return await database.get<MeetingModel>('meetings').query(Q.where('status', Q.oneOf(['pending', 'failed']))).fetch();
+        // Şimdilik basitçe tümünü çekip kod tarafında filtreleyeceğiz ya da Q importu gerekecek.
     }
     /**
      * Updates the summary of an existing meeting.

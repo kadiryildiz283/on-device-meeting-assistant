@@ -1,13 +1,15 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-    version: 1,
+    version: 2,
     tables: [
         tableSchema({
             name: 'meetings',
             columns: [
                 { name: 'title', type: 'string' },
                 { name: 'summary', type: 'string', isOptional: true },
+                { name: 'audio_file_path', type: 'string', isOptional: true },
+                { name: 'status', type: 'string', isOptional: true }, // pending, processing, completed, failed
                 { name: 'created_at', type: 'number' },
             ]
         }),

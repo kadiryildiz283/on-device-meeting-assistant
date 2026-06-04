@@ -14,6 +14,12 @@ export class MeetingModel extends Model {
     
     // @ts-ignore
     @field('summary') summary?: string;
+
+    // @ts-ignore
+    @field('audio_file_path') audioFilePath?: string;
+
+    // @ts-ignore
+    @field('status') status?: string;
     
     // @ts-ignore
     @date('created_at') createdAt!: Date;

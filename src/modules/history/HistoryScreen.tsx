@@ -14,13 +14,22 @@ const HistoryList = ({ meetings }: { meetings: MeetingModel[] }) => {
             contentContainerStyle={styles.listContainer}
             renderItem={({ item }) => (
                 <View style={styles.card}>
-                    <Text style={styles.title}>{item.title}</Text>
+                    <View style={styles.cardHeader}>
+                        <Text style={styles.title}>{item.title}</Text>
+                        <View style={[styles.statusBadge, item.status === 'completed' ? styles.statusCompleted : styles.statusPending]}>
+                            <Text style={styles.statusText}>
+                                {item.status === 'completed' ? 'TAMAMLANDI' : 
+                                 item.status === 'processing' ? 'İŞLENİYOR' : 
+                                 item.status === 'failed' ? 'BAŞARISIZ' : 'BEKLİYOR'}
+                            </Text>
+                        </View>
+                    </View>
                     <Text style={styles.date}>
                         {new Date(item.createdAt).toLocaleString('tr-TR', { 
                             day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' 
                         })}
                     </Text>
-                    {item.summary && <Text style={styles.summary}>{item.summary}</Text>}
+                    {item.summary && <Text style={styles.summary} numberOfLines={3}>{item.summary}</Text>}
                 </View>
             )}
             ListEmptyComponent={
@@ -71,7 +80,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#111', padding: 15, borderRadius: 10, 
         marginBottom: 15, borderWidth: 1, borderColor: '#222' 
     },
-    title: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 5 },
+    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+    statusCompleted: { backgroundColor: '#10b981' },
+    statusPending: { backgroundColor: '#3b82f6' },
+    statusText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
+    title: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 5, flex: 1 },
     date: { color: '#888', fontSize: 12, marginBottom: 10 },
     summary: { color: '#ccc', fontSize: 14, fontStyle: 'italic' },
     emptyText: { color: '#666', textAlign: 'center', marginTop: 50, fontSize: 16 }
