@@ -64,6 +64,7 @@ export class SyncService {
 
     private static syncTask = async (taskData: any) => {
         await new Promise(async (resolve) => {
+            let hasNotifiedStart = false;
             while (BackgroundService.isRunning()) {
                 const pending = await SyncService.getPendingList();
                 
@@ -80,8 +81,14 @@ export class SyncService {
 
                 if (!isSttOk || !isLlmOk) {
                     console.log(`[Sync] Sunuculara erişilemiyor (STT: ${isSttOk}, LLM: ${isLlmOk}). 10 saniye sonra tekrar denenecek.`);
+                    hasNotifiedStart = false; // Bağlantı koptuğunda durumu sıfırla ki tekrar bağlanınca bildirim atsın
                     await new Promise(r => setTimeout(() => r(true), taskData.delay));
-                    continue; // Bir sonraki döngüye geç (hataya düşürme)
+                    continue; // Bir sonraki döngüye geç (hataya düşürme, dosyayı silme)
+                }
+
+                if (!hasNotifiedStart) {
+                    await SyncService.notifyUser('Senkronizasyon Başladı', 'Sunucu bağlantısı aktif. Bekleyen toplantılar işleniyor...');
+                    hasNotifiedStart = true;
                 }
 
                 for (const meeting of pending) {
@@ -133,12 +140,13 @@ export class SyncService {
         try {
             const host = await SettingsService.getServerHost();
             const sttServer = `http://${host}:8080/inference`;
-            console.log(`[Sync] Uploading to STT: ${filePath} via ${sttServer}`);
+            console.log(`[Sync] Uploading to STT: ${filePath} via ${sttServer} (language: tr)`);
             // whisper.cpp server genellikle multi-part wav bekler
             const res = await ReactNativeBlobUtil.fetch('POST', sttServer, {
                 'Content-Type': 'multipart/form-data',
             }, [
                 { name: 'file', filename: 'audio.wav', data: ReactNativeBlobUtil.wrap(filePath) },
+                { name: 'language', data: 'tr' }
             ]);
 
             if (res.respInfo.status !== 200) {
