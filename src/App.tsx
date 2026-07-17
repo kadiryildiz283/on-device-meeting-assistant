@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
   Animated, 
@@ -11,6 +11,7 @@ import { MeetingScreen } from './modules/meeting/MeetingScreen';
 import { HistoryDrawer } from './modules/history/HistoryDrawer';
 import { MeetingDetailScreen } from './modules/meeting/MeetingDetailScreen';
 import { MeetingModel } from './database/MeetingModel';
+import { SyncService } from './services/SyncService';
 
 const { width } = Dimensions.get('window');
 const DRAWER_WIDTH = width * 0.80; // S25 geniş ekranı için %80 idealdir.
@@ -19,6 +20,11 @@ const App = () => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedMeeting, setSelectedMeeting] = useState<MeetingModel | null>(null);
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
+
+  useEffect(() => {
+    // Uygulama açıldığında bekleyen tüm senkronizasyonları tetikle
+    SyncService.startSync();
+  }, []);
 
   const toggleDrawer = () => {
     const toValue = isDrawerOpen ? -DRAWER_WIDTH : 0;

@@ -4,12 +4,38 @@ import notifee from '@notifee/react-native';
 import { MeetingController } from '../database/MeetingController';
 import { audioService } from './AudioService';
 import { MeetingModel } from '../database/MeetingModel';
-
-const STT_SERVER = 'http://172.16.10.141:8080/inference'; // Örnek whisper.cpp server endpoint'i
-const LLM_SERVER = 'http://172.16.10.141:11434/api/generate';
+import { SettingsService } from './SettingsService';
 
 export class SyncService {
     private static isSyncing = false;
+
+    public static async checkSttHealth(): Promise<boolean> {
+        try {
+            const host = await SettingsService.getServerHost();
+            const url = `http://${host}:8080/`;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 2000);
+            await fetch(url, { signal: controller.signal });
+            clearTimeout(id);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    public static async checkLlmHealth(): Promise<boolean> {
+        try {
+            const host = await SettingsService.getServerHost();
+            const url = `http://${host}:11434/`;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 2000);
+            await fetch(url, { signal: controller.signal });
+            clearTimeout(id);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
 
     public static async startSync() {
         if (this.isSyncing) return;
@@ -25,7 +51,7 @@ export class SyncService {
             taskDesc: 'Sunucuya veri gönderiliyor...',
             taskIcon: { name: 'ic_launcher', type: 'mipmap' },
             color: '#ff00ff',
-            parameters: { delay: 60000 },
+            parameters: { delay: 10000 }, // Deneme sıklığını 10 saniyeye indirdik
         };
 
         await BackgroundService.start(this.syncTask, options);
@@ -48,6 +74,16 @@ export class SyncService {
                     break;
                 }
 
+                // Sunucu sağlığını döngünün başında kontrol et
+                const isSttOk = await SyncService.checkSttHealth();
+                const isLlmOk = await SyncService.checkLlmHealth();
+
+                if (!isSttOk || !isLlmOk) {
+                    console.log(`[Sync] Sunuculara erişilemiyor (STT: ${isSttOk}, LLM: ${isLlmOk}). 10 saniye sonra tekrar denenecek.`);
+                    await new Promise(r => setTimeout(() => r(true), taskData.delay));
+                    continue; // Bir sonraki döngüye geç (hataya düşürme)
+                }
+
                 for (const meeting of pending) {
                     try {
                         console.log(`[Sync] Processing meeting: ${meeting.id}`);
@@ -66,9 +102,8 @@ export class SyncService {
                         await MeetingController.updateSummary(meeting, summary);
                         await MeetingController.updateStatus(meeting, 'completed');
 
-                        // 3. Cleanup
+                        // 3. Cleanup (Ses kaydı sadece BAŞARILI tamamlandığında silinir, asla yarıda silinmez!)
                         if (meeting.audioFilePath) {
-                            // AudioService'deki deleteRecord'u kullanalım ama path parametresi alacak şekilde güncellenmeli veya manuel silinmeli
                             const exists = await ReactNativeBlobUtil.fs.exists(meeting.audioFilePath);
                             if (exists) {
                                 await ReactNativeBlobUtil.fs.unlink(meeting.audioFilePath);
@@ -76,13 +111,19 @@ export class SyncService {
                         }
 
                         await SyncService.notifyUser('Analiz Tamamlandı', `${meeting.title} özeti hazır.`);
-                    } catch (error) {
+                    } catch (error: any) {
                         console.error(`[Sync] Error processing ${meeting.id}:`, error);
+                        // Hata durumunda statüyü failed yapalım ama dosyayı asla silmeyelim
                         await MeetingController.updateStatus(meeting, 'failed');
+                        const errorMessage = error instanceof Error ? error.message : String(error);
+                        await SyncService.notifyUser(
+                            'Senkronizasyon Hatası',
+                            `"${meeting.title}" toplantısı işlenirken beklenmeyen hata oluştu: ${errorMessage}`
+                        );
                     }
                 }
 
-                // Her dakika bir kontrol et
+                // Bir sonraki periyot için bekle
                 await new Promise(r => setTimeout(() => r(true), taskData.delay));
             }
         });
@@ -90,43 +131,55 @@ export class SyncService {
 
     private static async uploadToSTT(filePath: string): Promise<string | null> {
         try {
-            console.log(`[Sync] Uploading to STT: ${filePath}`);
+            const host = await SettingsService.getServerHost();
+            const sttServer = `http://${host}:8080/inference`;
+            console.log(`[Sync] Uploading to STT: ${filePath} via ${sttServer}`);
             // whisper.cpp server genellikle multi-part wav bekler
-            const res = await ReactNativeBlobUtil.fetch('POST', STT_SERVER, {
+            const res = await ReactNativeBlobUtil.fetch('POST', sttServer, {
                 'Content-Type': 'multipart/form-data',
             }, [
                 { name: 'file', filename: 'audio.wav', data: ReactNativeBlobUtil.wrap(filePath) },
             ]);
 
-            if (res.respInfo.status !== 200) return null;
+            if (res.respInfo.status !== 200) {
+                throw new Error(`Sunucu HTTP hatası döndürdü: ${res.respInfo.status}`);
+            }
             
             const data = res.json();
             return data.text || null;
-        } catch (e) {
+        } catch (e: any) {
             console.error("[Sync] STT Upload Error:", e);
-            return null;
+            throw new Error(`Ses dökümü (STT) sunucusuna bağlanılamadı. ${e.message || e}`);
         }
     }
 
     private static async getLLMSummary(text: string): Promise<string | null> {
         try {
+            const host = await SettingsService.getServerHost();
+            const llmServer = `http://${host}:11434/api/generate`;
+            const modelName = await SettingsService.getLlmModel();
+            console.log(`[Sync] Requesting summary via ${llmServer} using model ${modelName}`);
             const prompt = `Lütfen aşağıdaki toplantı dökümünü Türkçe olarak özetle:\n\n${text}`;
             
-            const res = await fetch(LLM_SERVER, {
+            const res = await fetch(llmServer, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: 'qwen2.5:latest', // Kullanıcı daha sonra değiştirebilir
+                    model: modelName,
                     prompt: prompt,
                     stream: false
                 }),
             });
 
+            if (res.status !== 200) {
+                throw new Error(`Sunucu HTTP hatası döndürdü: ${res.status}`);
+            }
+
             const data = await res.json();
             return data.response || null;
-        } catch (e) {
+        } catch (e: any) {
             console.error("[Sync] LLM Error:", e);
-            return null;
+            throw new Error(`Yapay zeka özetleme (LLM) sunucusuna bağlanılamadı. ${e.message || e}`);
         }
     }
 
@@ -140,3 +193,4 @@ export class SyncService {
         });
     }
 }
+

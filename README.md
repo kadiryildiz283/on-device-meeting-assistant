@@ -3,22 +3,24 @@
 Gizlilik odaklı, sunucu destekli yapay zeka ile çalışan ve yüksek performanslı mobil cihazlar (Samsung S24/S25, iPhone 15/16 Pro vb.) için optimize edilmiş akıllı toplantı asistanı.
 
 ## 🌟 Temel Özellikler
-- **Sunucu STT (whisper.cpp):** 172.16.10.141 sunucusunda çalışan Whisper motoru ile yüksek doğrulukta ses-metin dökümü.
-- **Sunucu LLM (Ollama):** 172.16.10.141:11434 sunucusunda çalışan Qwen 2.5 modeli ile toplantı sonunda otomatik akıllı özetleme.
+- **Dinamik Sunucu Bağlantısı:** Sunucu IP veya Host adresi uygulama içinden dinamik olarak değiştirilebilir.
+- **Canlı Sunucu Durum Barı:** Whisper (STT) ve Ollama (LLM) sunucu bağlantıları 5 saniyede bir pinglenerek bağlı olup olmadıkları ana ekrandaki göstergelerle (Yeşil/Kırmızı) canlı gösterilir.
+- **Esnek Model Yapılandırması:** Ollama tarafında kullanılan LLM model adı uygulama arayüzünden dinamik olarak ayarlanabilir (Örn: `qwen3.6:35b`, `llama3`, `mistral` vb.).
 - **Yerel Veri Saklama:** `@nozbe/watermelondb` (SQLite) ile tüm veriler cihazda kalır, buluta çıkmaz.
-- **Akıllı Senkronizasyon:** Sunucuya ulaşılamazsa ses kaydı saklanır ve her dakika otomatik senkronizasyon denenir.
-- **Arka Plan İşleme:** Uygulama kapalıyken bile senkronizasyon devam eder.
+- **Kesintisiz & Akıllı Senkronizasyon:** Sunuculara ulaşılamadığında ses kaydı cihazda güvenle saklanır, hataya düşülmez ve her 10 saniyede bir otomatik olarak yeniden denenir. Sunucular açıldığı an işlem otomatik tamamlanır.
+- **Arka Plan ve Başlangıç Senkronizasyonu:** Uygulama kapalıyken bile arka planda işlem devam eder. Ayrıca uygulama her açıldığında bekleyen tüm senkronizasyonlar otomatik olarak tetiklenerek kaldığı yerden devam eder.
 
 ## 🛠 Teknik Mimari (Kaydet -> Senkronize Et)
 
-Uygulama, cihazdonanımını yormamak için tüm AI işlemlerini sunucuya devreder:
+Uygulama, cihaz donanımını yormamak için tüm AI işlemlerini sunucuya devreder:
 
 1. **Kayıt Aşaması:** `react-native-audio-record` ile ses 16kHz WAV formatında diske yazılır. AI motorları bu sırada tamamen kapalıdır.
 2. **Bekleme Aşaması:** Kayıt durdurulduğunda dosya yolu ve "pending" durumu veritabanına kaydedilir.
-3. **Senkronizasyon Aşaması:**
-   - Eğer sunucuya ulaşılabiliyorsa → STT → LLM işlemleri sırayla yapılır.
-   - Eğer ulaşılamıyorsa → Dosya saklanır, her dakika sunucu kontrol edilir.
-   - Başarısız olursa → Dosya ASLA silinmez, "failed" durumuyla işaretlenir.
+3. **Senkronizasyon Aşaması (Her 10 Saniyede Bir Kontrol):**
+   - Sunucuların durumları kontrol edilir (`STT` ve `LLM` aktifliği).
+   - Sunuculara ulaşılamıyorsa → İşlem bekletilir, 10 saniye sonra tekrar denenir. Ses dosyası asla silinmez.
+   - Sunuculara ulaşılabiliyorsa → STT → LLM işlemleri sırayla tamamlanır.
+   - İşlemler başarıyla bitince → Yerel diskteki ses dosyası silinerek yer açılır.
 4. **Tamamlama:** Özet ve transkripsiyon veritabanına kaydedilir, kullanıcıya bildirim gönderilir.
 
 ---
@@ -31,8 +33,7 @@ Uygulama, cihazdonanımını yormamak için tüm AI işlemlerini sunucuya devred
 - **Donanım:** En az 6GB RAM'li fiziksel cihaz.
 
 ### Sunucu Gereksinimleri
-- **STT Sunucusu:** 172.16.10.141 (whisper.cpp server, port 8080)
-- **LLM Sunucusu:** 172.16.10.141:11434 (Ollama)
+Sunucuları yerel bilgisayarınızda veya uzaktaki bir sunucuda çalıştırabilirsiniz.
 
 ### 1. Bağımlılıkların Kurulumu
 ```bash
@@ -42,37 +43,29 @@ cd android && ./gradlew clean && cd ..
 
 ### 2. Sunucu Yapılandırması
 
-#### A. Whisper.cpp STT Sunucusu (172.16.10.141)
-
+#### A. Whisper.cpp STT Sunucusu
 whisper.cpp server'ı başlatmak için:
 ```bash
-# Modeli indir (örnek: tiny)
-./models/download-ggml-model.sh tiny
-
-# Server'ı başlat
-./server -m models/ggml-tiny.bin -t 4 --port 8080
+# Server'ı başlat (Varsayılan Port: 8080)
+./build/bin/whisper-server -m models/ggml-large-v3.bin --port 8080
 ```
 
-#### B. Ollama LLM Sunucusu (172.16.10.141:11434)
-
+#### B. Ollama LLM Sunucusu (Varsayılan Port: 11434)
 ```bash
 # Ollama'yı başlat
 ollama serve
 
-# Qwen 2.5 modelini indir (veya daha küçük bir model)
-ollama pull qwen2.5:latest
-# veya daha hafif bir model için:
-# ollama pull qwen2.5:1.5b
+# İstediğiniz modeli indirin (Örnek modeller)
+ollama pull qwen3.6:35b
 ```
 
 ### 3. Uygulama Yapılandırması
 
-Sunucu adreslerini değiştirmek için `src/services/SyncService.ts` dosyasını düzenleyin:
+Sunucu adreslerini ve LLM model adını uygulama arayüzünde en üstte yer alan **Sunucu** alanına tıklayarak değiştirebilirsiniz:
+- **Android Emülatör:** `10.0.2.2` girin.
+- **Fiziksel Cihaz:** Bilgisayarınızın yerel IP adresini girin (Örn: `192.168.1.100`).
+- **Ollama Model Adı:** Ollama sunucunuzda indirilmiş olan modelin adını girin (Örn: `qwen3.6:35b` veya `llama3`).
 
-```typescript
-const STT_SERVER = 'http://172.16.10.141:8080/inference';
-const LLM_SERVER = 'http://172.16.10.141:11434/api/generate';
-```
 
 ### 4. Çalıştırma
 
